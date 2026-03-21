@@ -1,0 +1,12 @@
+Setup Stage
+I made a directory for HitTheBell_Pro and opened a terminal there to run ""npm init -y"" (created package.json). 
+At the recommendation of Claude, I then installed CRXJS with Vite, along with React and TypeScript. 
+I chose to ignore the high severity vulnerabilities on installation because apparently they wont appear by the time I ship to users. 
+I opened vscode in the folder from the terminal with "". code "" to create various other files for the file structure.
+I copied some config and barebones starter code from Claude into various files. 
+I created a GitHub repository and pulled to get the README (shouldn't have made one in the project settings) then pushed my vscode code!
+When running npm in vscode I had to ctrl + c to get my cursor back.
+Installed polyfill to run the extension on edge and firefox and made manifest files and vite configs for each.
+Used ""npm run dev:firefox"" and same for edge to load them to browser.
+Failed, uninstalled CRXJS.
+Debugged for a bit, I have a working browser extension now with nothing in it. I'm tired.
