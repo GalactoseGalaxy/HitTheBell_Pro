@@ -1,3 +1,5 @@
-chrome.runtime.onInstalled.addListener(() => {
-  console.log('Extension installed!')
-})
+import browser from "webextension-polyfill";
+
+browser.runtime.onInstalled.addListener(() => {
+  console.log("Extension installed!");
+});
