@@ -13,7 +13,11 @@ import {
 } from "../lib/storage";
 import { shouldRefreshOnPopupOpen } from "../lib/channel-service";
 import { fetchVideoDurations } from "../lib/youtube";
-import { restorePurchase, startCheckout } from "../lib/billing";
+import {
+  requestRestoreCode,
+  startCheckout,
+  verifyRestoreCode,
+} from "../lib/billing";
 import type { ExtensionMessage } from "../types";
 import type { Channel, PopupSettings, TrialAccessState } from "../types/storage";
 
@@ -36,6 +40,12 @@ export default function Popup() {
   const [trialAccess, setTrialAccess] = useState<TrialAccessState | null>(null);
   const [paddleCustomerId, setPaddleCustomerIdState] = useState("");
   const [billingNotice, setBillingNotice] = useState<string | null>(null);
+  const [restoreEmail, setRestoreEmail] = useState("");
+  const [restoreCode, setRestoreCode] = useState("");
+  const [restoreStep, setRestoreStep] = useState<"idle" | "code">("idle");
+  const [isRequestingCode, setIsRequestingCode] = useState(false);
+  const [isVerifyingCode, setIsVerifyingCode] = useState(false);
+  const [showRestoreForm, setShowRestoreForm] = useState(false);
   const hydrateState = useRef({ running: false, hydratedIds: new Set<string>() });
   const iconUrl = browser.runtime.getURL("icon.png");
   const isDark =
@@ -53,7 +63,7 @@ export default function Popup() {
       setIsLoading(true);
       try {
         void fetchAndMergeRemoteChannels().catch(() => undefined);
-      const [nextChannels, nextSettings, nextTrialAccess, nextPaddleId] =
+        const [nextChannels, nextSettings, nextTrialAccess, nextPaddleId] =
           await Promise.all([
             getChannels(),
             getPopupSettings(),
@@ -306,9 +316,62 @@ export default function Popup() {
     setBillingNotice(result.message);
   }
 
-  async function handleRestore(): Promise<void> {
-    const result = await restorePurchase();
-    setBillingNotice(result.message);
+  async function handleRequestRestoreCode(): Promise<void> {
+    if (!restoreEmail.trim()) {
+      setBillingNotice("Please enter the email you used to purchase HitTheBell.");
+      return;
+    }
+
+    setIsRequestingCode(true);
+    try {
+      const result = await requestRestoreCode(restoreEmail);
+      setBillingNotice(result.message);
+      if (result.ok) {
+        setRestoreStep("code");
+      }
+    } finally {
+      setIsRequestingCode(false);
+    }
+  }
+
+  async function handleVerifyRestoreCode(): Promise<void> {
+    if (!restoreEmail.trim()) {
+      setBillingNotice("Please enter the email you used to purchase HitTheBell.");
+      return;
+    }
+
+    if (!restoreCode.trim()) {
+      setBillingNotice("Please enter the code we emailed you.");
+      return;
+    }
+
+    setIsVerifyingCode(true);
+    try {
+      const result = await verifyRestoreCode(restoreEmail, restoreCode);
+      setBillingNotice(result.message);
+      if (result.paddleCustomerId) {
+        await setPaddleCustomerId(result.paddleCustomerId);
+        setPaddleCustomerIdState(result.paddleCustomerId);
+        await fetchAndMergeRemoteChannels();
+        setChannels(await getChannels());
+        setShowRestoreForm(false);
+        setRestoreStep("idle");
+        setRestoreCode("");
+      }
+    } finally {
+      setIsVerifyingCode(false);
+    }
+  }
+
+  function toggleRestoreForm(): void {
+    setShowRestoreForm((value) => {
+      const next = !value;
+      if (!next) {
+        setRestoreStep("idle");
+        setRestoreCode("");
+      }
+      return next;
+    });
   }
 
   function formatDate(dateString: string): string {
@@ -607,6 +670,76 @@ export default function Popup() {
     );
   }
 
+  function renderRestoreForm() {
+    if (!showRestoreForm) return null;
+
+    return (
+      <div className="mt-3 grid gap-2">
+        <input
+          value={restoreEmail}
+          onChange={(event) => setRestoreEmail(event.target.value)}
+          placeholder="you@example.com"
+          className={`h-8 w-full rounded-lg border px-2 text-[12px] outline-none ${
+            isDark
+              ? "border-[#2b2b2b] bg-[#151515] text-white"
+              : "border-[#ddd4c6] bg-white text-[#1c1914]"
+          }`}
+        />
+        {restoreStep === "code" && (
+          <input
+            value={restoreCode}
+            onChange={(event) => setRestoreCode(event.target.value)}
+            placeholder="Enter code"
+            className={`h-8 w-full rounded-lg border px-2 text-[12px] outline-none ${
+              isDark
+                ? "border-[#2b2b2b] bg-[#151515] text-white"
+                : "border-[#ddd4c6] bg-white text-[#1c1914]"
+            }`}
+          />
+        )}
+        <div className="flex items-center gap-2">
+          {restoreStep === "code" ? (
+            <button
+              onClick={() => void handleVerifyRestoreCode()}
+              disabled={isVerifyingCode}
+              className={`h-8 flex-1 rounded-lg bg-[#ff4e45] px-3 text-[11px] font-semibold text-white transition-colors duration-150 hover:bg-[#ff5f57] ${
+                isVerifyingCode ? "opacity-60 cursor-not-allowed" : ""
+              }`}
+            >
+              Verify
+            </button>
+          ) : (
+            <button
+              onClick={() => void handleRequestRestoreCode()}
+              disabled={isRequestingCode}
+              className={`h-8 flex-1 rounded-lg bg-[#ff4e45] px-3 text-[11px] font-semibold text-white transition-colors duration-150 hover:bg-[#ff5f57] ${
+                isRequestingCode ? "opacity-60 cursor-not-allowed" : ""
+              }`}
+            >
+              Send code
+            </button>
+          )}
+          {restoreStep === "code" && (
+            <button
+              onClick={() => void handleRequestRestoreCode()}
+              disabled={isRequestingCode}
+              className={`h-8 rounded-lg border px-3 text-[11px] font-semibold transition-colors duration-150 ${
+                isDark
+                  ? "border-[#2b2b2b] text-[#d0d0d0] hover:bg-[#1c1c1c]"
+                  : "border-[#cfc6b8] text-[#5f584b] hover:bg-[#eee7da]"
+              } ${isRequestingCode ? "opacity-60 cursor-not-allowed" : ""}`}
+            >
+              Resend
+            </button>
+          )}
+        </div>
+        {billingNotice && (
+          <div className={`text-[11px] ${theme.tertiaryText}`}>{billingNotice}</div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className={`w-[400px] h-[520px] flex flex-col font-sans overflow-hidden ${theme.root}`}>
       <div className={`flex items-center gap-2 px-4 py-3 border-b ${theme.headerBorder}`}>
@@ -707,12 +840,16 @@ export default function Popup() {
                   Subscribe
                 </button>
               )}
+              {trialBanner.showSubscribe && (
+                <button
+                  onClick={() => toggleRestoreForm()}
+                  className="rounded-full border border-white/20 px-2.5 py-1 text-[11px] font-semibold text-current transition-colors duration-150 hover:bg-white/10"
+                >
+                  Sync
+                </button>
+              )}
             </div>
-            {billingNotice && (
-              <div className={`mt-1 text-[11px] ${theme.tertiaryText}`}>
-                {billingNotice}
-              </div>
-            )}
+            {renderRestoreForm()}
           </div>
         )}
 
@@ -761,20 +898,16 @@ export default function Popup() {
                   Subscribe
                 </button>
                 <button
-                  onClick={() => void handleRestore()}
+                  onClick={() => toggleRestoreForm()}
                   className={`rounded-full border px-4 py-2 text-[12px] font-semibold transition-colors duration-150 ${theme.paywallGhost}`}
                 >
                   Already paid?
                 </button>
               </div>
+              {renderRestoreForm()}
               <div className={`mt-3 text-[11px] ${theme.paywallSecondary}`}>
                 Tracked channels: {channels.length}
               </div>
-              {billingNotice && (
-                <div className={`mt-2 text-[11px] ${theme.paywallSecondary}`}>
-                  {billingNotice}
-                </div>
-              )}
             </div>
           </div>
         ) : isLoading && channels.length === 0 ? (
@@ -826,5 +959,3 @@ export default function Popup() {
     </div>
   );
 }
-
-

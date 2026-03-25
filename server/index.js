@@ -1,9 +1,17 @@
 import express from "express";
 import cors from "cors";
+import crypto from "crypto";
 import { initDb, getPool } from "./db.js";
 
 const app = express();
 const PORT = process.env.PORT || 8787;
+const PADDLE_API_KEY = process.env.PADDLE_API_KEY || "";
+const PADDLE_API_BASE = process.env.PADDLE_API_BASE || "https://api.paddle.com";
+const POSTMARK_API_TOKEN = process.env.POSTMARK_API_TOKEN || "";
+const POSTMARK_FROM = process.env.POSTMARK_FROM || "";
+const RESTORE_CODE_SECRET = process.env.RESTORE_CODE_SECRET || "";
+const RESTORE_CODE_TTL_MINUTES = 10;
+const MAX_RESTORE_ATTEMPTS = 5;
 
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
@@ -38,6 +46,127 @@ function mapChannelRow(row) {
     lastError: row.last_error ?? null,
     updatedAt: new Date(row.updated_at).toISOString(),
   };
+}
+
+function normalizeEmail(rawEmail) {
+  return String(rawEmail ?? "").trim().toLowerCase();
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function generateRestoreCode() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function hashRestoreCode(code) {
+  if (!RESTORE_CODE_SECRET) {
+    throw new Error("Missing RESTORE_CODE_SECRET");
+  }
+  return crypto.createHmac("sha256", RESTORE_CODE_SECRET).update(code).digest("hex");
+}
+
+async function sendRestoreEmail(email, code) {
+  if (!POSTMARK_API_TOKEN) {
+    throw new Error("Missing POSTMARK_API_TOKEN");
+  }
+  if (!POSTMARK_FROM) {
+    throw new Error("Missing POSTMARK_FROM");
+  }
+
+  const response = await fetch("https://api.postmarkapp.com/email", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-Postmark-Server-Token": POSTMARK_API_TOKEN,
+    },
+    body: JSON.stringify({
+      From: POSTMARK_FROM,
+      To: email,
+      Subject: "Your HitTheBell sign-in code",
+      TextBody: `Your HitTheBell code is ${code}. It expires in ${RESTORE_CODE_TTL_MINUTES} minutes. If you did not request this, you can ignore this email.`,
+      MessageStream: "outbound",
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Postmark error (${response.status}): ${text}`);
+  }
+}
+
+async function upsertRestoreCode(email, codeHash) {
+  const pool = getPool();
+  const expiresAt = new Date(
+    Date.now() + RESTORE_CODE_TTL_MINUTES * 60 * 1000,
+  ).toISOString();
+
+  await pool.query(
+    `
+      INSERT INTO restore_codes (email, code_hash, expires_at, attempts, updated_at)
+      VALUES ($1, $2, $3, 0, NOW())
+      ON CONFLICT (email)
+      DO UPDATE SET
+        code_hash = EXCLUDED.code_hash,
+        expires_at = EXCLUDED.expires_at,
+        attempts = 0,
+        updated_at = NOW();
+    `,
+    [email, codeHash, expiresAt],
+  );
+
+  return expiresAt;
+}
+
+async function getRestoreCode(email) {
+  const pool = getPool();
+  const result = await pool.query(
+    "SELECT * FROM restore_codes WHERE email = $1",
+    [email],
+  );
+  return result.rows[0] ?? null;
+}
+
+async function incrementRestoreAttempts(email) {
+  const pool = getPool();
+  const result = await pool.query(
+    "UPDATE restore_codes SET attempts = attempts + 1, updated_at = NOW() WHERE email = $1 RETURNING attempts",
+    [email],
+  );
+  return result.rows[0]?.attempts ?? 0;
+}
+
+async function deleteRestoreCode(email) {
+  const pool = getPool();
+  await pool.query("DELETE FROM restore_codes WHERE email = $1", [email]);
+}
+
+async function fetchPaddleCustomerByEmail(email) {
+  if (!PADDLE_API_KEY) {
+    throw new Error("Missing PADDLE_API_KEY");
+  }
+
+  const url = new URL(`${PADDLE_API_BASE}/customers`);
+  url.searchParams.set("email", email);
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Bearer ${PADDLE_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Paddle API error (${response.status}): ${text}`);
+  }
+
+  const payload = await response.json();
+  const customers = Array.isArray(payload?.data) ? payload.data : [];
+  const match = customers[0];
+  return match?.id ?? null;
 }
 
 async function getCustomerByPaddleId(paddleCustomerId) {
@@ -194,6 +323,87 @@ app.post("/customers/:paddleCustomerId/sync", async (req, res) => {
   await replaceChannels(customer.id, channels);
   const fullCustomer = await getCustomerByPaddleId(paddleCustomerId);
   res.json(fullCustomer);
+});
+
+app.post("/restore/request", async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body?.email);
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({ error: "Valid email is required." });
+    }
+
+    const code = generateRestoreCode();
+    const codeHash = hashRestoreCode(code);
+    await upsertRestoreCode(email, codeHash);
+    await sendRestoreEmail(email, code);
+
+    return res.json({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Restore failed.";
+    return res.status(500).json({ error: message });
+  }
+});
+
+app.post("/restore/verify", async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body?.email);
+    const code = String(req.body?.code ?? "").trim();
+
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({ error: "Valid email is required." });
+    }
+
+    if (!code) {
+      return res.status(400).json({ error: "Code is required." });
+    }
+
+    const record = await getRestoreCode(email);
+    if (!record) {
+      return res
+        .status(404)
+        .json({ error: "No active code for that email. Request a new one." });
+    }
+
+    const expiresAt = new Date(record.expires_at).getTime();
+    if (Number.isNaN(expiresAt) || expiresAt < Date.now()) {
+      await deleteRestoreCode(email);
+      return res.status(410).json({ error: "Code expired. Request a new one." });
+    }
+
+    if (record.attempts >= MAX_RESTORE_ATTEMPTS) {
+      return res
+        .status(429)
+        .json({ error: "Too many attempts. Request a new code." });
+    }
+
+    const codeHash = hashRestoreCode(code);
+    if (codeHash !== record.code_hash) {
+      const attempts = await incrementRestoreAttempts(email);
+      if (attempts >= MAX_RESTORE_ATTEMPTS) {
+        return res
+          .status(429)
+          .json({ error: "Too many attempts. Request a new code." });
+      }
+      return res.status(401).json({ error: "Invalid code. Try again." });
+    }
+
+    await deleteRestoreCode(email);
+
+    const paddleCustomerId = await fetchPaddleCustomerByEmail(email);
+    if (!paddleCustomerId) {
+      return res.status(404).json({ error: "No customer found for that email." });
+    }
+
+    await ensureCustomer(paddleCustomerId, "paid");
+    const fullCustomer = await getCustomerByPaddleId(paddleCustomerId);
+    return res.json({
+      paddleCustomerId,
+      customer: fullCustomer,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Restore failed.";
+    return res.status(500).json({ error: message });
+  }
 });
 
 await initDb();

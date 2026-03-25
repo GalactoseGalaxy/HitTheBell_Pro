@@ -38,6 +38,17 @@ export async function initDb() {
       UNIQUE (customer_id, channel_id)
     );
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS restore_codes (
+      email TEXT PRIMARY KEY,
+      code_hash TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
 }
 
 export function getPool() {
