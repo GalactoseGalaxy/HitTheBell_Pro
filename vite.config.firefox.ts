@@ -36,11 +36,17 @@ export default defineConfig({
             js: ["src/content/index.ts"],
           },
         ],
+        web_accessible_resources: [
+          "assets/*",
+          "assets/*/*",
+          "assets/*/*/*",
+        ],
         permissions: [
           "storage",
           "tabs",
           "contextMenus",
           "alarms",
+          "notifications",
           "https://youtube.com/*",
           "https://*.youtube.com/*",
           "https://www.youtube.com/*",

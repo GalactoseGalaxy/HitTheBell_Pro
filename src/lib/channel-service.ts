@@ -13,12 +13,18 @@ import {
 import type { Channel } from "../types";
 
 const POPUP_OPEN_REFRESH_WINDOW_MS = 10 * 60 * 1000;
-const METADATA_REFRESH_WINDOW_MS = 24 * 60 * 60 * 1000;
+const METADATA_REFRESH_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const CHANNEL_REFRESH_WINDOW_MS = 10 * 60 * 1000;
 
 export type RefreshOutcome =
   | {
       type: "no_change";
       channelId: string;
+    }
+  | {
+      type: "skipped";
+      channelId: string;
+      reason: "recent";
     }
   | {
       type: "new_upload";
@@ -57,6 +63,10 @@ function shouldRefreshMetadata(channel: Channel): boolean {
     !channel.metadataLastCheckedAt ||
     isOlderThan(channel.metadataLastCheckedAt, METADATA_REFRESH_WINDOW_MS)
   );
+}
+
+function shouldRefreshChannel(channel: Channel): boolean {
+  return isOlderThan(channel.lastCheckedAt, CHANNEL_REFRESH_WINDOW_MS);
 }
 
 export function shouldRefreshOnPopupOpen(channels: Channel[]): boolean {
@@ -136,6 +146,11 @@ export async function followChannelFromContext(input: {
     throw new Error("Trial ended. Subscribe to continue.");
   }
 
+  const existingChannels = await getChannels();
+  if (existingChannels.length >= 30) {
+    throw new Error("Channel limit reached (30). Unfollow a channel to add more.");
+  }
+
   const urls = [input.linkUrl, input.srcUrl, input.pageUrl].filter(
     (value): value is string => Boolean(value),
   );
@@ -196,6 +211,7 @@ async function refreshSingleChannel(
       knownLatestVideoId: channel.latestVideo?.id ?? null,
       existingLatestVideo: channel.latestVideo,
       skipMetadataRefresh: !refreshMetadata,
+      deferVideoDetails: includeShorts,
       cachedMetadata:
         channel.uploadsPlaylistId && channel.name && channel.avatarUrl
           ? {
@@ -228,6 +244,7 @@ async function refreshSingleChannel(
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown refresh error";
+
     await mutateChannels((channels) =>
       channels.map((current) =>
         current.id === channel.id
@@ -268,6 +285,15 @@ export async function refreshAllChannels(): Promise<RefreshAllChannelsResult> {
     const outcomes: RefreshOutcome[] = [];
 
     for (const channel of channels) {
+      if (!shouldRefreshChannel(channel)) {
+        outcomes.push({
+          type: "skipped",
+          channelId: channel.id,
+          reason: "recent",
+        });
+        continue;
+      }
+
       outcomes.push(await refreshSingleChannel(channel, includeShorts));
     }
 

@@ -8,6 +8,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     webExtension({
+      useDynamicUrlWebAccessibleResources: false,
       manifest: {
         name: "HitTheBell Pro",
         description: "A browser extension built with React and TypeScript.",
@@ -36,12 +37,17 @@ export default defineConfig({
             js: ["src/content/index.ts"],
           },
         ],
+        web_accessible_resources: [
+          {
+            resources: ["assets/*", "assets/*/*", "assets/*/*/*"],
+            matches: ["*://youtube.com/*", "*://*.youtube.com/*"],
+          },
+        ],
         permissions: [
           "storage",
           "tabs",
           "contextMenus",
           "alarms",
-          "scripting",
           "notifications",
         ],
         host_permissions: [

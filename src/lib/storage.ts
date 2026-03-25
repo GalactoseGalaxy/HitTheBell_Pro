@@ -256,12 +256,19 @@ export async function fetchAndMergeRemoteChannels(): Promise<Channel[] | null> {
   const paddleCustomerId = await getPaddleCustomerId();
   if (!paddleCustomerId) return null;
 
+  const localChannels = await getChannels();
   const remote = await fetchCustomerFromBackend(paddleCustomerId);
   if (!remote?.channels) return null;
 
   const now = new Date().toISOString();
-  const normalized = normalizeChannels(remote.channels, now);
+  const normalized = normalizeChannels(
+    [...localChannels, ...remote.channels],
+    now,
+  );
   await browser.storage.sync.set({ [CHANNELS_KEY]: normalized });
+  if (normalized.length > 0) {
+    void syncChannelsToBackend(paddleCustomerId, normalized);
+  }
   return normalized;
 }
 

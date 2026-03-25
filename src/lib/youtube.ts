@@ -1,5 +1,5 @@
 import type { Channel, LatestVideo } from "../types";
-
+import { getCachedVideoDurations, setCachedVideoDurations } from "./video-duration-cache";import { getCachedVideoDetails, setCachedVideoDetails } from "./video-details-cache";
 const API_KEY = import.meta.env.VITE_YOUTUBE_API_KEY;
 const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
 const YOUTUBE_HOSTS = new Set([
@@ -8,6 +8,7 @@ const YOUTUBE_HOSTS = new Set([
   "m.youtube.com",
 ]);
 const SHORTS_MAX_SECONDS = 180;
+const EXCLUDE_SHORTS_FIRST_BATCH_SIZE = 1;
 const EXCLUDE_SHORTS_BATCH_SIZE = 3;
 const EXCLUDE_SHORTS_MAX_CANDIDATES = 9;
 
@@ -78,6 +79,7 @@ export interface ChannelSnapshot {
 interface LatestVideoFetchOptions {
   knownLatestVideoId?: string | null;
   existingLatestVideo?: LatestVideo | null;
+  deferVideoDetails?: boolean;
 }
 
 interface ChannelSnapshotFetchOptions extends LatestVideoFetchOptions {
@@ -280,21 +282,53 @@ async function fetchVideosByIds(
     return new Map();
   }
 
-  const videoData = await requestJson<YouTubeListResponse<YouTubeVideoItem>>(
-    buildUrl("videos", {
-      part: "snippet,contentDetails",
-      id: videoIds.join(","),
-    }),
-  );
-
+  const uniqueIds = Array.from(new Set(videoIds));
   const detailsById = new Map<string, YouTubeVideoItem>();
-  for (const item of videoData.items ?? []) {
-    if (typeof item.id === "string") {
-      detailsById.set(item.id, item);
+
+  for (let i = 0; i < uniqueIds.length; i += 50) {
+    const batch = uniqueIds.slice(i, i + 50);
+    const videoData = await requestJson<YouTubeListResponse<YouTubeVideoItem>>(
+      buildUrl("videos", {
+        part: "snippet,contentDetails",
+        id: batch.join(","),
+      }),
+    );
+
+    for (const item of videoData.items ?? []) {
+      if (typeof item.id === "string") {
+        detailsById.set(item.id, item);
+      }
     }
   }
 
   return detailsById;
+}
+
+export async function fetchVideoDurations(
+  videoIds: string[],
+): Promise<Map<string, string | null>> {
+  const uniqueIds = Array.from(new Set(videoIds));
+  const cached = await getCachedVideoDurations(uniqueIds);
+  const missing = uniqueIds.filter((id) => !cached.has(id));
+  const durations = new Map<string, string | null>();
+
+  cached.forEach((value, key) => durations.set(key, value));
+
+  if (missing.length > 0) {
+    const newlyCached = new Map<string, string | null>();
+    for (let i = 0; i < missing.length; i += 50) {
+      const batch = missing.slice(i, i + 50);
+      const detailsById = await fetchVideosByIds(batch);
+      for (const id of batch) {
+        const duration = detailsById.get(id)?.contentDetails?.duration ?? null;
+        durations.set(id, duration);
+        newlyCached.set(id, duration);
+      }
+    }
+    await setCachedVideoDurations(newlyCached);
+  }
+
+  return durations;
 }
 
 async function fetchChannelIdByVideoId(videoId: string): Promise<string | null> {
@@ -431,6 +465,14 @@ async function fetchLatestVideo(
       return options.existingLatestVideo;
     }
 
+    if (options.knownLatestVideoId && latestVideo.id === options.knownLatestVideoId) {
+      return null;
+    }
+
+    if (options.deferVideoDetails) {
+      return latestVideo;
+    }
+
     const detailsById = await fetchVideosByIds([latestVideo.id]);
     return toLatestVideo(
       latestVideo.id,
@@ -442,13 +484,14 @@ async function fetchLatestVideo(
   let pageToken: string | undefined;
   let scannedCount = 0;
   let fallbackLatest: LatestVideo | null = null;
+  let batchSize = EXCLUDE_SHORTS_FIRST_BATCH_SIZE;
 
   while (scannedCount < EXCLUDE_SHORTS_MAX_CANDIDATES) {
     const playlistData = await requestJson<YouTubeListResponse<YouTubePlaylistItem>>(
       buildUrl("playlistItems", {
         part: "snippet,contentDetails",
         playlistId: uploadsPlaylistId,
-        maxResults: String(EXCLUDE_SHORTS_BATCH_SIZE),
+        maxResults: String(batchSize),
         ...(pageToken ? { pageToken } : {}),
       }),
     );
@@ -462,7 +505,7 @@ async function fetchLatestVideo(
       .map((item) => item.contentDetails?.videoId ?? null)
       .filter((id): id is string => Boolean(id));
 
-    const detailsById = await fetchVideosByIds(videoIds);
+    const durationsById = await fetchVideoDurations(videoIds);
 
     for (const playlistItem of playlistItems) {
       const videoId = playlistItem.contentDetails?.videoId;
@@ -470,7 +513,10 @@ async function fetchLatestVideo(
 
       const candidate = toLatestVideo(
         videoId,
-        detailsById.get(videoId),
+        {
+          contentDetails: { duration: durationsById.get(videoId) ?? null },
+          snippet: playlistItem.snippet,
+        },
         playlistItem,
       );
       if (!candidate) continue;
@@ -506,6 +552,8 @@ async function fetchLatestVideo(
     if (!pageToken) {
       break;
     }
+
+    batchSize = EXCLUDE_SHORTS_BATCH_SIZE;
   }
 
   return fallbackLatest;
@@ -559,3 +607,7 @@ export function createChannelRecord(
     updatedAt: now,
   };
 }
+
+
+
+

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import browser from "webextension-polyfill";
 import {
   fetchAndMergeRemoteChannels,
@@ -7,10 +7,12 @@ import {
   getPopupSettings,
   getTrialAccessState,
   isChannelLatestSeen,
+  mutateChannels,
   setPaddleCustomerId,
   setPopupSettings,
 } from "../lib/storage";
 import { shouldRefreshOnPopupOpen } from "../lib/channel-service";
+import { fetchVideoDurations } from "../lib/youtube";
 import { restorePurchase, startCheckout } from "../lib/billing";
 import type { ExtensionMessage } from "../types";
 import type { Channel, PopupSettings, TrialAccessState } from "../types/storage";
@@ -33,6 +35,7 @@ export default function Popup() {
   const [trialAccess, setTrialAccess] = useState<TrialAccessState | null>(null);
   const [paddleCustomerId, setPaddleCustomerIdState] = useState("");
   const [billingNotice, setBillingNotice] = useState<string | null>(null);
+  const hydrateState = useRef({ running: false, hydratedIds: new Set<string>() });
   const iconUrl = browser.runtime.getURL("icon.png");
   const isDark =
     popupSettings.themePreference === "system"
@@ -48,11 +51,11 @@ export default function Popup() {
       await fetchAndMergeRemoteChannels();
       const [nextChannels, nextSettings, nextTrialAccess, nextPaddleId] =
         await Promise.all([
-        getChannels(),
-        getPopupSettings(),
-        getTrialAccessState(),
-        getPaddleCustomerId(),
-      ]);
+          getChannels(),
+          getPopupSettings(),
+          getTrialAccessState(),
+          getPaddleCustomerId(),
+        ]);
       setChannels(nextChannels);
       setPopupSettingsState(nextSettings);
       setTrialAccess(nextTrialAccess);
@@ -92,6 +95,7 @@ export default function Popup() {
       if (nextSettings.debugForceLocked) {
         return;
       }
+      void hydrateMissingDurations(nextChannels);
       if (!shouldRefreshOnPopupOpen(nextChannels)) {
         return;
       }
@@ -104,7 +108,8 @@ export default function Popup() {
         } satisfies ExtensionMessage);
       } finally {
         setIsRefreshing(false);
-        await load();
+        const { channels: refreshedChannels } = await load();
+        void hydrateMissingDurations(refreshedChannels);
       }
     }
 
@@ -145,7 +150,53 @@ export default function Popup() {
     return () => window.clearInterval(interval);
   }, [excludeShortsCooldownUntil]);
 
+  async function hydrateMissingDurations(
+    nextChannels: Channel[],
+  ): Promise<void> {
+    if (hydrateState.current.running) return;
+
+    const missingIds = nextChannels
+      .map((channel) =>
+        channel.latestVideo && !channel.latestVideo.duration
+          ? channel.latestVideo.id
+          : null,
+      )
+      .filter((id): id is string => Boolean(id))
+      .filter((id) => !hydrateState.current.hydratedIds.has(id));
+
+    if (missingIds.length === 0) return;
+
+    hydrateState.current.running = true;
+    try {
+      for (let i = 0; i < missingIds.length; i += 50) {
+        const batch = missingIds.slice(i, i + 50);
+        const durations = await fetchVideoDurations(batch);
+        batch.forEach((id) => hydrateState.current.hydratedIds.add(id));
+        const updated = await mutateChannels((channels) =>
+          channels.map((channel) => {
+            if (!channel.latestVideo) return channel;
+            if (channel.latestVideo.duration) return channel;
+            if (!durations.has(channel.latestVideo.id)) return channel;
+            const duration = durations.get(channel.latestVideo.id);
+            if (!duration) return channel;
+            return {
+              ...channel,
+              latestVideo: {
+                ...channel.latestVideo,
+                duration,
+              },
+            };
+          }),
+        );
+        setChannels(updated);
+      }
+    } finally {
+      hydrateState.current.running = false;
+    }
+  }
+
   async function toggleWatched(channel: Channel): Promise<void> {
+    if (isLocked) return;
     await browser.runtime.sendMessage({
       type: isChannelLatestSeen(channel)
         ? "MARK_CHANNEL_LATEST_UNSEEN"
@@ -156,6 +207,7 @@ export default function Popup() {
   }
 
   async function unfollow(id: string): Promise<void> {
+    if (isLocked) return;
     const updated = channels.filter((channel) => channel.id !== id);
     await browser.storage.sync.set({ channels: updated });
     setChannels(updated);
@@ -167,6 +219,7 @@ export default function Popup() {
   }
 
   async function handleVideoOpen(channel: Channel): Promise<void> {
+    if (isLocked) return;
     if (!channel.latestVideo) return;
 
     if (!isChannelLatestSeen(channel)) {
@@ -181,6 +234,7 @@ export default function Popup() {
   }
 
   async function toggleExcludeShorts(): Promise<void> {
+    if (isLocked) return;
     if (
       excludeShortsCooldownUntil &&
       Date.now() < excludeShortsCooldownUntil
@@ -326,7 +380,10 @@ export default function Popup() {
   }
 
   const trialBanner = getTrialBanner();
-  const isLocked = trialAccess?.status === "expired" || popupSettings.debugForceLocked;
+  const isLocked =
+    trialAccess?.status === "expired" || popupSettings.debugForceLocked;
+  const channelLimit = 30;
+  const slotsRemaining = Math.max(0, channelLimit - channels.length);
   const unwatchedChannels = channels.filter(
     (channel) => !isChannelLatestSeen(channel),
   );
@@ -396,8 +453,13 @@ export default function Popup() {
           />
 
           <div
-            onClick={() => void handleVideoOpen(channel)}
-            className={`flex-1 min-w-0 flex gap-2 items-center ${channel.latestVideo ? "cursor-pointer" : "cursor-default"}`}
+            onClick={() => {
+              if (isLocked) return;
+              void handleVideoOpen(channel);
+            }}
+            className={`flex-1 min-w-0 flex gap-2 items-center ${
+              channel.latestVideo && !isLocked ? "cursor-pointer" : "cursor-default"
+            } ${isLocked ? "pointer-events-none" : ""}`}
           >
             {channel.latestVideo ? (
               <>
@@ -430,7 +492,7 @@ export default function Popup() {
             )}
           </div>
 
-          <div className="flex flex-col items-center gap-1.5 shrink-0 w-16">
+          <div className={`flex flex-col items-center gap-1.5 shrink-0 w-16 ${isLocked ? "pointer-events-none opacity-50" : ""}`}>
             <button
               onClick={() => void toggleWatched(channel)}
               title={latestSeen ? "Mark as unwatched" : "Mark as watched"}
@@ -646,6 +708,12 @@ export default function Popup() {
         </div>
       )}
 
+      {!isLocked && (
+        <div className={`mx-4 mt-2 text-[11px] ${theme.secondaryText}`}>
+          Slots remaining: {slotsRemaining} / {channelLimit}
+        </div>
+      )}
+
       <div className="mx-4 mt-3 rounded-xl border border-dashed border-[#d8d0c4] px-3 py-2 text-[12px]">
         <div className={`mb-2 text-[11px] font-semibold ${theme.secondaryText}`}>
           Paddle Customer ID (for sync)
@@ -668,7 +736,7 @@ export default function Popup() {
         </div>
       </div>
 
-      {isLocked ? (
+      {isLocked && (
         <div className="px-4 py-6">
           <div className={`rounded-2xl border px-4 py-5 text-center ${theme.paywallBg} ${theme.paywallBorder}`}>
             <div className={`text-[14px] font-semibold ${theme.paywallPrimary}`}>
@@ -691,14 +759,19 @@ export default function Popup() {
                 Already paid?
               </button>
             </div>
+            <div className={`mt-3 text-[11px] ${theme.paywallSecondary}`}>
+              Read-only preview • {channels.length} channels • {unwatchedChannels.length} unwatched
+            </div>
             {billingNotice && (
-              <div className={`mt-3 text-[11px] ${theme.paywallSecondary}`}>
+              <div className={`mt-2 text-[11px] ${theme.paywallSecondary}`}>
                 {billingNotice}
               </div>
             )}
           </div>
         </div>
-      ) : channels.length === 0 ? (
+      )}
+
+      {channels.length === 0 ? (
         <div className={`p-5 text-[13px] text-center ${theme.secondaryText}`}>
           Not following any channels yet.
           <br />
