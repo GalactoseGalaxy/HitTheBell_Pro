@@ -33,6 +33,7 @@ export interface StorageData {
   channels: Channel[];
   trialStartDate: string | null;
   hasPaidAccess?: boolean;
+  paddleCustomerId?: string | null;
   popupSettings?: PopupSettings;
 }
 

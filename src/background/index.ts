@@ -5,6 +5,7 @@ import {
   markChannelLatestUnseen,
   refreshAllChannels,
 } from "../lib/channel-service";
+import { fetchAndMergeRemoteChannels } from "../lib/storage";
 import type { ExtensionMessage, ShowToastMessage } from "../types";
 
 const REFRESH_ALARM_NAME = "refresh-followed-channels";
@@ -34,6 +35,7 @@ async function sendToastToTab(
 }
 
 browser.runtime.onInstalled.addListener(() => {
+  void fetchAndMergeRemoteChannels();
   browser.contextMenus.create({
     id: "save-channel-id",
     title: "Follow Channel",
@@ -72,6 +74,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
 
 browser.runtime.onStartup.addListener(() => {
   void ensureRefreshAlarm();
+  void fetchAndMergeRemoteChannels();
   void refreshAllChannels();
 });
 

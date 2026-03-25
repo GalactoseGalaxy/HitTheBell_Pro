@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import browser from "webextension-polyfill";
 import {
+  fetchAndMergeRemoteChannels,
   getChannels,
+  getPaddleCustomerId,
   getPopupSettings,
   getTrialAccessState,
   isChannelLatestSeen,
+  setPaddleCustomerId,
   setPopupSettings,
 } from "../lib/storage";
 import { shouldRefreshOnPopupOpen } from "../lib/channel-service";
@@ -28,6 +31,7 @@ export default function Popup() {
     debugForceLocked: false,
   });
   const [trialAccess, setTrialAccess] = useState<TrialAccessState | null>(null);
+  const [paddleCustomerId, setPaddleCustomerIdState] = useState("");
   const [billingNotice, setBillingNotice] = useState<string | null>(null);
   const iconUrl = browser.runtime.getURL("icon.png");
   const isDark =
@@ -41,14 +45,18 @@ export default function Popup() {
       settings: PopupSettings;
       trialAccess: TrialAccessState;
     }> {
-      const [nextChannels, nextSettings, nextTrialAccess] = await Promise.all([
+      await fetchAndMergeRemoteChannels();
+      const [nextChannels, nextSettings, nextTrialAccess, nextPaddleId] =
+        await Promise.all([
         getChannels(),
         getPopupSettings(),
         getTrialAccessState(),
+        getPaddleCustomerId(),
       ]);
       setChannels(nextChannels);
       setPopupSettingsState(nextSettings);
       setTrialAccess(nextTrialAccess);
+      setPaddleCustomerIdState(nextPaddleId ?? "");
       return {
         channels: nextChannels,
         settings: nextSettings,
@@ -224,6 +232,12 @@ export default function Popup() {
       debugForceLocked: !popupSettings.debugForceLocked,
     });
     setPopupSettingsState(nextSettings);
+  }
+
+  async function handleSavePaddleId(): Promise<void> {
+    const trimmed = paddleCustomerId.trim();
+    await setPaddleCustomerId(trimmed.length > 0 ? trimmed : null);
+    setPaddleCustomerIdState(trimmed);
   }
 
   async function handleSubscribe(): Promise<void> {
@@ -631,6 +645,28 @@ export default function Popup() {
           )}
         </div>
       )}
+
+      <div className="mx-4 mt-3 rounded-xl border border-dashed border-[#d8d0c4] px-3 py-2 text-[12px]">
+        <div className={`mb-2 text-[11px] font-semibold ${theme.secondaryText}`}>
+          Paddle Customer ID (for sync)
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            value={paddleCustomerId}
+            onChange={(event) => setPaddleCustomerIdState(event.target.value)}
+            placeholder="cus_..."
+            className={`h-8 flex-1 rounded-lg border px-2 text-[12px] outline-none ${
+              isDark ? "border-[#2b2b2b] bg-[#151515] text-white" : "border-[#ddd4c6] bg-white text-[#1c1914]"
+            }`}
+          />
+          <button
+            onClick={() => void handleSavePaddleId()}
+            className="h-8 rounded-lg bg-[#ff4e45] px-3 text-[11px] font-semibold text-white transition-colors duration-150 hover:bg-[#ff5f57]"
+          >
+            Save
+          </button>
+        </div>
+      </div>
 
       {isLocked ? (
         <div className="px-4 py-6">

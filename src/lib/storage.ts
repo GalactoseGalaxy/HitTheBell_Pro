@@ -5,11 +5,13 @@ import type {
   PopupSettings,
   TrialAccessState,
 } from "../types";
+import { fetchCustomerFromBackend, syncChannelsToBackend } from "./backend";
 
 const CHANNELS_KEY = "channels";
 const TRIAL_START_DATE_KEY = "trialStartDate";
 const HAS_PAID_ACCESS_KEY = "hasPaidAccess";
 const POPUP_SETTINGS_KEY = "popupSettings";
+const PADDLE_CUSTOMER_ID_KEY = "paddleCustomerId";
 const TRIAL_LENGTH_DAYS = 7;
 const TRIAL_LENGTH_MS = TRIAL_LENGTH_DAYS * 24 * 60 * 60 * 1000;
 const DEFAULT_POPUP_SETTINGS: PopupSettings = {
@@ -163,6 +165,7 @@ async function migrateLegacyLocalStorage(): Promise<Channel[]> {
     TRIAL_START_DATE_KEY,
     HAS_PAID_ACCESS_KEY,
     POPUP_SETTINGS_KEY,
+    PADDLE_CUSTOMER_ID_KEY,
   ]);
   const legacyChannels = normalizeChannels(localData[CHANNELS_KEY], now);
   const trialStartDate =
@@ -171,17 +174,23 @@ async function migrateLegacyLocalStorage(): Promise<Channel[]> {
       : null;
   const hasPaidAccess = normalizeBoolean(localData[HAS_PAID_ACCESS_KEY]);
   const popupSettings = normalizePopupSettings(localData[POPUP_SETTINGS_KEY]);
+  const paddleCustomerId =
+    typeof localData[PADDLE_CUSTOMER_ID_KEY] === "string"
+      ? localData[PADDLE_CUSTOMER_ID_KEY]
+      : null;
 
   if (
     legacyChannels.length > 0 ||
     trialStartDate ||
     hasPaidAccess ||
+    paddleCustomerId ||
     localData[POPUP_SETTINGS_KEY] !== undefined
   ) {
     await browser.storage.sync.set({
       [CHANNELS_KEY]: legacyChannels,
       [TRIAL_START_DATE_KEY]: trialStartDate,
       [HAS_PAID_ACCESS_KEY]: hasPaidAccess,
+      [PADDLE_CUSTOMER_ID_KEY]: paddleCustomerId,
       [POPUP_SETTINGS_KEY]: popupSettings,
     });
     await browser.storage.local.remove([
@@ -189,6 +198,7 @@ async function migrateLegacyLocalStorage(): Promise<Channel[]> {
       TRIAL_START_DATE_KEY,
       HAS_PAID_ACCESS_KEY,
       POPUP_SETTINGS_KEY,
+      PADDLE_CUSTOMER_ID_KEY,
     ]);
   }
 
@@ -210,6 +220,47 @@ export async function getChannels(): Promise<Channel[]> {
 export async function setChannels(channels: Channel[]): Promise<Channel[]> {
   const now = new Date().toISOString();
   const normalized = normalizeChannels(channels, now);
+  await browser.storage.sync.set({ [CHANNELS_KEY]: normalized });
+
+  const paddleCustomerId = await getPaddleCustomerId();
+  if (paddleCustomerId) {
+    void syncChannelsToBackend(paddleCustomerId, normalized);
+  }
+
+  return normalized;
+}
+
+export async function getPaddleCustomerId(): Promise<string | null> {
+  const data = await browser.storage.sync.get(PADDLE_CUSTOMER_ID_KEY);
+  if (typeof data[PADDLE_CUSTOMER_ID_KEY] === "string") {
+    return data[PADDLE_CUSTOMER_ID_KEY];
+  }
+
+  const localData = await browser.storage.local.get(PADDLE_CUSTOMER_ID_KEY);
+  if (typeof localData[PADDLE_CUSTOMER_ID_KEY] === "string") {
+    await browser.storage.sync.set({
+      [PADDLE_CUSTOMER_ID_KEY]: localData[PADDLE_CUSTOMER_ID_KEY],
+    });
+    await browser.storage.local.remove(PADDLE_CUSTOMER_ID_KEY);
+    return localData[PADDLE_CUSTOMER_ID_KEY];
+  }
+
+  return null;
+}
+
+export async function setPaddleCustomerId(paddleCustomerId: string | null): Promise<void> {
+  await browser.storage.sync.set({ [PADDLE_CUSTOMER_ID_KEY]: paddleCustomerId });
+}
+
+export async function fetchAndMergeRemoteChannels(): Promise<Channel[] | null> {
+  const paddleCustomerId = await getPaddleCustomerId();
+  if (!paddleCustomerId) return null;
+
+  const remote = await fetchCustomerFromBackend(paddleCustomerId);
+  if (!remote?.channels) return null;
+
+  const now = new Date().toISOString();
+  const normalized = normalizeChannels(remote.channels, now);
   await browser.storage.sync.set({ [CHANNELS_KEY]: normalized });
   return normalized;
 }
