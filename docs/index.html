@@ -18,7 +18,7 @@
         padding: 24px 20px 8px;
       }
       main {
-        padding: 0 20px 32px;
+        padding: 0 20px 40px;
         max-width: 720px;
       }
       h1 {
@@ -27,6 +27,10 @@
       }
       p {
         line-height: 1.6;
+      }
+      .muted {
+        color: #6d6457;
+        font-size: 13px;
       }
       .card {
         border: 1px solid #ddd4c6;
@@ -45,20 +49,37 @@
       ul {
         padding-left: 18px;
       }
+      .note {
+        border-left: 4px solid #d9c9b5;
+        background: #fff6e8;
+        padding: 10px 12px;
+        border-radius: 8px;
+        font-size: 13px;
+        color: #5f584b;
+      }
     </style>
   </head>
   <body>
     <header>
-      <h1>HitTheBell Legal</h1>
-      <p>Quick links to the documents for HitTheBell.</p>
+      <h1>Legal</h1>
+      <p class="muted">Updated: March 25, 2026</p>
     </header>
     <main>
+      <div class="note">
+        <strong>Draft notice:</strong> These documents are templates and not legal advice. Please have an attorney review before publishing.
+      </div>
+
       <div class="card">
+        <p>Choose a document:</p>
         <ul>
-          <li><a href="./pricing.html">Pricing</a></li>
           <li><a href="./terms.html">Terms of Service</a></li>
+          <li><a href="./pricing.html">Pricing</a></li>
         </ul>
       </div>
+
+      <p class="muted">
+        For questions, contact <strong>[support@email.com]</strong>.
+      </p>
     </main>
   </body>
 </html>

@@ -46,6 +46,7 @@ export default defineConfig({
         permissions: [
           "storage",
           "tabs",
+          "scripting",
           "contextMenus",
           "alarms",
           "notifications",
@@ -64,3 +65,5 @@ export default defineConfig({
     emptyOutDir: true,
   },
 });
+
+

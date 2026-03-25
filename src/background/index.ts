@@ -26,6 +26,27 @@ function buildVideoUrl(videoId: string): string {
   return `https://www.youtube.com/watch?v=${videoId}`;
 }
 
+async function injectContentScripts(): Promise<void> {
+  if (!browser.scripting?.executeScript) return;
+
+  const tabs = await browser.tabs.query({
+    url: ["*://youtube.com/*", "*://*.youtube.com/*"],
+  });
+
+  await Promise.all(
+    tabs
+      .filter((tab) => typeof tab.id === "number")
+      .map((tab) =>
+        browser.scripting
+          .executeScript({
+            target: { tabId: tab.id as number },
+            files: ["src/content/index.js"],
+          })
+          .catch(() => undefined),
+      ),
+  );
+}
+
 async function canShowNotifications(): Promise<boolean> {
   if (!browser.notifications?.create) return false;
   if (!browser.permissions?.contains) return true;
@@ -141,6 +162,7 @@ browser.runtime.onInstalled.addListener(() => {
 
   void ensureRefreshAlarm();
   void refreshAndMaybeNotify("startup");
+  void injectContentScripts();
 });
 
 browser.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -173,6 +195,7 @@ browser.runtime.onStartup.addListener(() => {
   void fetchAndMergeRemoteChannels();
   void getChannels().then(updateBadgeFromChannels);
   void refreshAndMaybeNotify("startup");
+  void injectContentScripts();
 });
 
 browser.alarms.onAlarm.addListener((alarm) => {
@@ -205,6 +228,11 @@ browser.runtime.onMessage.addListener((message: unknown) => {
     });
   }
 
+  if (input.type === "REINJECT_CONTENT") {
+    void injectContentScripts();
+    return true;
+  }
+
   return undefined;
 });
 
@@ -219,4 +247,11 @@ browser.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "sync" && areaName !== "local") return;
   if (!changes.channels) return;
   void getChannels().then(updateBadgeFromChannels);
+});
+
+browser.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (info.status !== "complete") return;
+  const url = tab.url ?? "";
+  if (!url.includes("youtube.com")) return;
+  void injectContentScripts();
 });

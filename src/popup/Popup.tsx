@@ -21,6 +21,7 @@ export default function Popup() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [unfollowing, setUnfollowing] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [systemPrefersDark, setSystemPrefersDark] = useState(false);
   const [excludeShortsRefreshCount, setExcludeShortsRefreshCount] = useState(0);
   const [excludeShortsCooldownUntil, setExcludeShortsCooldownUntil] = useState<
@@ -43,28 +44,34 @@ export default function Popup() {
       : popupSettings.themePreference === "dark";
 
   useEffect(() => {
+    void browser.runtime.sendMessage({ type: "REINJECT_CONTENT" } satisfies ExtensionMessage);
     async function load(): Promise<{
       channels: Channel[];
       settings: PopupSettings;
       trialAccess: TrialAccessState;
     }> {
-      await fetchAndMergeRemoteChannels();
+      setIsLoading(true);
+      try {
+        void fetchAndMergeRemoteChannels().catch(() => undefined);
       const [nextChannels, nextSettings, nextTrialAccess, nextPaddleId] =
-        await Promise.all([
-          getChannels(),
-          getPopupSettings(),
-          getTrialAccessState(),
-          getPaddleCustomerId(),
-        ]);
-      setChannels(nextChannels);
-      setPopupSettingsState(nextSettings);
-      setTrialAccess(nextTrialAccess);
-      setPaddleCustomerIdState(nextPaddleId ?? "");
-      return {
-        channels: nextChannels,
-        settings: nextSettings,
-        trialAccess: nextTrialAccess,
-      };
+          await Promise.all([
+            getChannels(),
+            getPopupSettings(),
+            getTrialAccessState(),
+            getPaddleCustomerId(),
+          ]);
+        setChannels(nextChannels);
+        setPopupSettingsState(nextSettings);
+        setTrialAccess(nextTrialAccess);
+        setPaddleCustomerIdState(nextPaddleId ?? "");
+        return {
+          channels: nextChannels,
+          settings: nextSettings,
+          trialAccess: nextTrialAccess,
+        };
+      } finally {
+        setIsLoading(false);
+      }
     }
 
     function handleStorageChange(
@@ -601,7 +608,7 @@ export default function Popup() {
   }
 
   return (
-    <div className={`w-[400px] max-h-[520px] min-h-[200px] font-sans overflow-hidden ${theme.root}`}>
+    <div className={`w-[400px] h-[520px] flex flex-col font-sans overflow-hidden ${theme.root}`}>
       <div className={`flex items-center gap-2 px-4 py-3 border-b ${theme.headerBorder}`}>
         <img src={iconUrl} alt="HitTheBell" className="w-5 h-5" />
         <div className={`flex-1 min-w-0 font-semibold text-[15px] ${theme.primaryText}`}>
@@ -687,124 +694,128 @@ export default function Popup() {
         )}
       </div>
 
-      {trialBanner && (
-        <div className={`mx-4 mt-3 rounded-xl border px-3 py-2 text-[12px] font-medium ${trialBanner.tone}`}>
-          <div className="flex items-center gap-2">
-            <span className="flex-1">{trialBanner.label}</span>
-            {trialBanner.showSubscribe && (
-              <button
-                onClick={() => void handleSubscribe()}
-                className="rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-current transition-colors duration-150 hover:bg-white/20"
-              >
-                Subscribe
-              </button>
-            )}
-          </div>
-          {billingNotice && (
-            <div className={`mt-1 text-[11px] ${theme.tertiaryText}`}>
-              {billingNotice}
-            </div>
-          )}
-        </div>
-      )}
-
-      {!isLocked && (
-        <div className={`mx-4 mt-2 text-[11px] ${theme.secondaryText}`}>
-          Slots remaining: {slotsRemaining} / {channelLimit}
-        </div>
-      )}
-
-      <div className="mx-4 mt-3 rounded-xl border border-dashed border-[#d8d0c4] px-3 py-2 text-[12px]">
-        <div className={`mb-2 text-[11px] font-semibold ${theme.secondaryText}`}>
-          Paddle Customer ID (for sync)
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            value={paddleCustomerId}
-            onChange={(event) => setPaddleCustomerIdState(event.target.value)}
-            placeholder="cus_..."
-            className={`h-8 flex-1 rounded-lg border px-2 text-[12px] outline-none ${
-              isDark ? "border-[#2b2b2b] bg-[#151515] text-white" : "border-[#ddd4c6] bg-white text-[#1c1914]"
-            }`}
-          />
-          <button
-            onClick={() => void handleSavePaddleId()}
-            className="h-8 rounded-lg bg-[#ff4e45] px-3 text-[11px] font-semibold text-white transition-colors duration-150 hover:bg-[#ff5f57]"
-          >
-            Save
-          </button>
-        </div>
-      </div>
-
-      {isLocked && (
-        <div className="px-4 py-6">
-          <div className={`rounded-2xl border px-4 py-5 text-center ${theme.paywallBg} ${theme.paywallBorder}`}>
-            <div className={`text-[14px] font-semibold ${theme.paywallPrimary}`}>
-              Trial ended
-            </div>
-            <div className={`mt-1 text-[12px] ${theme.paywallSecondary}`}>
-              Subscribe to keep tracking new uploads across your channels.
-            </div>
-            <div className="mt-4 flex items-center justify-center gap-2">
-              <button
-                onClick={() => void handleSubscribe()}
-                className={`rounded-full px-4 py-2 text-[12px] font-semibold transition-colors duration-150 ${theme.paywallButton}`}
-              >
-                Subscribe
-              </button>
-              <button
-                onClick={() => void handleRestore()}
-                className={`rounded-full border px-4 py-2 text-[12px] font-semibold transition-colors duration-150 ${theme.paywallGhost}`}
-              >
-                Already paid?
-              </button>
-            </div>
-            <div className={`mt-3 text-[11px] ${theme.paywallSecondary}`}>
-              Read-only preview • {channels.length} channels • {unwatchedChannels.length} unwatched
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {trialBanner && (
+          <div className={`mx-4 mt-3 rounded-xl border px-3 py-2 text-[12px] font-medium ${trialBanner.tone}`}>
+            <div className="flex items-center gap-2">
+              <span className="flex-1">{trialBanner.label}</span>
+              {trialBanner.showSubscribe && (
+                <button
+                  onClick={() => void handleSubscribe()}
+                  className="rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-current transition-colors duration-150 hover:bg-white/20"
+                >
+                  Subscribe
+                </button>
+              )}
             </div>
             {billingNotice && (
-              <div className={`mt-2 text-[11px] ${theme.paywallSecondary}`}>
+              <div className={`mt-1 text-[11px] ${theme.tertiaryText}`}>
                 {billingNotice}
               </div>
             )}
           </div>
-        </div>
-      )}
+        )}
 
-      {channels.length === 0 ? (
-        <div className={`p-5 text-[13px] text-center ${theme.secondaryText}`}>
-          Not following any channels yet.
-          <br />
-          Right-click any channel or video on YouTube and click "Follow
-          Channel".
+        {!isLocked && (
+          <div className={`mx-4 mt-2 text-[11px] ${theme.secondaryText}`}>
+            Slots remaining: {slotsRemaining} / {channelLimit}
+          </div>
+        )}
+
+        <div className="mx-4 mt-3 rounded-xl border border-dashed border-[#d8d0c4] px-3 py-2 text-[12px]">
+          <div className={`mb-2 text-[11px] font-semibold ${theme.secondaryText}`}>
+            Paddle Customer ID (for sync)
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              value={paddleCustomerId}
+              onChange={(event) => setPaddleCustomerIdState(event.target.value)}
+              placeholder="cus_..."
+              className={`h-8 flex-1 rounded-lg border px-2 text-[12px] outline-none ${
+                isDark ? "border-[#2b2b2b] bg-[#151515] text-white" : "border-[#ddd4c6] bg-white text-[#1c1914]"
+              }`}
+            />
+            <button
+              onClick={() => void handleSavePaddleId()}
+              className="h-8 rounded-lg bg-[#ff4e45] px-3 text-[11px] font-semibold text-white transition-colors duration-150 hover:bg-[#ff5f57]"
+            >
+              Save
+            </button>
+          </div>
         </div>
-      ) : (
-        <div className="max-h-[468px] overflow-y-auto">
-          {unwatchedChannels.length > 0 && (
-            <>
-              <div className={`sticky top-0 z-10 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] border-b backdrop-blur-sm ${theme.sectionUnwatched}`}>
-                Unwatched Videos
+
+        {isLocked ? (
+          <div className="px-4 py-6">
+            <div className={`rounded-2xl border px-4 py-5 text-center ${theme.paywallBg} ${theme.paywallBorder}`}>
+              <div className={`text-[14px] font-semibold ${theme.paywallPrimary}`}>
+                Trial ended
               </div>
-              <ul className="list-none p-0 m-0">
-                {unwatchedChannels.map(renderChannelRow)}
-              </ul>
-            </>
-          )}
-
-          {watchedChannels.length > 0 && (
-            <>
-              {unwatchedChannels.length > 0 && (
-                <div className={`sticky top-0 z-10 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] border-b backdrop-blur-sm ${theme.sectionWatched}`}>
-                  Watched
+              <div className={`mt-1 text-[12px] ${theme.paywallSecondary}`}>
+                Subscribe to keep tracking new uploads across your channels.
+              </div>
+              <div className="mt-4 flex items-center justify-center gap-2">
+                <button
+                  onClick={() => void handleSubscribe()}
+                  className={`rounded-full px-4 py-2 text-[12px] font-semibold transition-colors duration-150 ${theme.paywallButton}`}
+                >
+                  Subscribe
+                </button>
+                <button
+                  onClick={() => void handleRestore()}
+                  className={`rounded-full border px-4 py-2 text-[12px] font-semibold transition-colors duration-150 ${theme.paywallGhost}`}
+                >
+                  Already paid?
+                </button>
+              </div>
+              <div className={`mt-3 text-[11px] ${theme.paywallSecondary}`}>
+                Tracked channels: {channels.length}
+              </div>
+              {billingNotice && (
+                <div className={`mt-2 text-[11px] ${theme.paywallSecondary}`}>
+                  {billingNotice}
                 </div>
               )}
-              <ul className="list-none p-0 m-0">
-                {watchedChannels.map(renderChannelRow)}
-              </ul>
-            </>
-          )}
-        </div>
-      )}
+            </div>
+          </div>
+        ) : isLoading && channels.length === 0 ? (
+          <div className={`px-4 py-6 text-[12px] ${theme.secondaryText}`}>
+            Loading channels...
+          </div>
+        ) : channels.length === 0 ? (
+          <div className={`p-5 text-[13px] text-center ${theme.secondaryText}`}>
+            Not following any channels yet.
+            <br />
+            Right-click any channel or video on YouTube and click "Follow
+            Channel".
+          </div>
+        ) : (
+          <div className="mt-3">
+            {unwatchedChannels.length > 0 && (
+              <>
+                <div className={`sticky top-0 z-10 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] border-b backdrop-blur-sm ${theme.sectionUnwatched}`}>
+                  Unwatched Videos
+                </div>
+                <ul className="list-none p-0 m-0">
+                  {unwatchedChannels.map(renderChannelRow)}
+                </ul>
+              </>
+            )}
+
+            {watchedChannels.length > 0 && (
+              <>
+                {unwatchedChannels.length > 0 && (
+                  <div className={`sticky top-0 z-10 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] border-b backdrop-blur-sm ${theme.sectionWatched}`}>
+                    Watched
+                  </div>
+                )}
+                <ul className="list-none p-0 m-0">
+                  {watchedChannels.map(renderChannelRow)}
+                </ul>
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       <style>{`
         @keyframes slideIn {
@@ -815,3 +826,5 @@ export default function Popup() {
     </div>
   );
 }
+
+

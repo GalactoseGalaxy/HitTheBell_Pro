@@ -18,26 +18,30 @@
         padding: 24px 20px 8px;
       }
       main {
-        padding: 0 20px 32px;
-        max-width: 720px;
+        padding: 0 20px 40px;
+        max-width: 860px;
       }
       h1 {
         font-size: 24px;
         margin: 0 0 6px;
       }
+      h2 {
+        font-size: 16px;
+        margin-top: 22px;
+      }
       p {
         line-height: 1.6;
+      }
+      .muted {
+        color: #6d6457;
+        font-size: 13px;
       }
       .card {
         border: 1px solid #ddd4c6;
         background: #fffaf1;
         border-radius: 12px;
-        padding: 16px;
+        padding: 18px;
         margin-top: 16px;
-      }
-      .muted {
-        color: #6d6457;
-        font-size: 13px;
       }
       a {
         color: #b7382d;
@@ -46,22 +50,86 @@
       a:hover {
         text-decoration: underline;
       }
+      ul {
+        padding-left: 18px;
+      }
+      .price {
+        font-size: 28px;
+        font-weight: 700;
+      }
+      .tag {
+        display: inline-block;
+        margin-left: 8px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #fff0e1;
+        color: #7a3a2c;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .note {
+        border-left: 4px solid #d9c9b5;
+        background: #fff6e8;
+        padding: 10px 12px;
+        border-radius: 8px;
+        font-size: 13px;
+        color: #5f584b;
+      }
     </style>
   </head>
   <body>
     <header>
       <h1>Pricing</h1>
-      <p class="muted">Updated: March 24, 2026</p>
+      <p class="muted">Updated: March 25, 2026</p>
     </header>
     <main>
+      <div class="note">
+        <strong>Draft notice:</strong> This is a best-effort template and is not legal advice. Please have a qualified attorney review and customize it for your business before publishing.
+      </div>
+
       <div class="card">
-        <p><strong>Free Trial</strong>: 7 days</p>
-        <p><strong>Plan</strong>: Add your pricing details here.</p>
-        <p class="muted">
-          Replace this section with your final subscription price, billing
-          cadence, and any tax details.
+        <h2>HitTheBell Pro</h2>
+        <p class="price">$[Price] / month <span class="tag">7-day free trial</span></p>
+        <p>
+          Track new uploads from the channels you follow and get notified when new videos appear.
+        </p>
+        <ul>
+          <li>Track up to [Channel Limit] channels.</li>
+          <li>Desktop notifications for new uploads.</li>
+          <li>Cross-device sync (requires account setup).</li>
+          <li>Exclude Shorts toggle.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>Billing & Trial</h2>
+        <p>
+          Your free trial lasts 7 days from the date you start the trial. If you do not cancel before
+          the trial ends, your subscription will automatically renew at the rate shown above.
+        </p>
+        <p>
+          Payments are processed by our payment provider (e.g., Paddle). Taxes may apply depending on
+          your location.
         </p>
       </div>
+
+      <div class="card">
+        <h2>Cancellation</h2>
+        <p>
+          You can cancel any time in the billing portal or by contacting support at
+          <strong>[support@email.com]</strong>. Your access will remain active until the end of the
+          current billing period unless otherwise required by law.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>Refund Policy</h2>
+        <p>
+          Unless required by law, fees are non-refundable. If you believe a billing error occurred,
+          contact support and we will review your request.
+        </p>
+      </div>
+
       <p>
         <a href="./index.html">Back to Legal</a>
       </p>

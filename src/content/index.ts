@@ -52,10 +52,13 @@ async function followCurrentChannel(): Promise<void> {
     const result = (await browser.runtime.sendMessage({
       type: "FOLLOW_CHANNEL_FROM_CONTEXT",
       pageUrl: window.location.href,
-    } satisfies ExtensionMessage)) as { channel?: { name?: string } } | null;
+    } satisfies ExtensionMessage)) as
+      | { status?: "followed" | "already_following"; channel?: { name?: string } }
+      | null;
 
     if (result?.channel?.name) {
-      showToast(`Now following ${result.channel.name}`, "success");
+      const prefix = result.status === "already_following" ? "Already following" : "Now following";
+      showToast(`${prefix} ${result.channel.name}`, result.status === "already_following" ? "info" : "success");
       return;
     }
 
@@ -70,6 +73,13 @@ function listLooksLikeBellMenu(list: Element): boolean {
   const labels = Array.from(list.querySelectorAll("yt-formatted-string"))
     .map((node) => node.textContent?.trim() ?? "")
     .filter(Boolean);
+
+  if (labels.length === 0) {
+    const text = list.textContent?.trim() ?? "";
+    if (text) {
+      labels.push(...text.split(/\s+/).filter(Boolean));
+    }
+  }
 
   return (
     labels.includes("All") &&
@@ -247,3 +257,14 @@ observer.observe(document.documentElement, {
 });
 
 injectFollowMenuItem();
+
+document.addEventListener(
+  "click",
+  () => {
+    window.setTimeout(() => {
+      injectFollowMenuItem();
+    }, 50);
+  },
+  { capture: true },
+);
+

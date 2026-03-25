@@ -26,9 +26,14 @@ export interface ShowToastMessage {
   level: "success" | "error" | "info";
 }
 
+export interface ReinjectContentMessage {
+  type: "REINJECT_CONTENT";
+}
+
 export type ExtensionMessage =
   | FollowChannelFromContextMessage
   | RefreshAllChannelsMessage
   | MarkChannelLatestSeenMessage
   | MarkChannelLatestUnseenMessage
-  | ShowToastMessage;
+  | ShowToastMessage
+  | ReinjectContentMessage;
