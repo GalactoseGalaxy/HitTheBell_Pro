@@ -1,10 +1,12 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import webExtension from "@samrum/vite-plugin-web-extension";
+import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [
     react(),
+    tailwindcss(),
     webExtension({
       manifest: {
         name: "HitTheBell Pro",
@@ -30,7 +32,7 @@ export default defineConfig({
         },
         content_scripts: [
           {
-            matches: ["<all_urls>"],
+            matches: ["*://youtube.com/*", "*://*.youtube.com/*"],
             js: ["src/content/index.ts"],
           },
         ],
@@ -38,10 +40,13 @@ export default defineConfig({
           "storage",
           "tabs",
           "contextMenus",
+          "alarms",
           "scripting",
           "notifications",
         ],
         host_permissions: [
+          "https://youtube.com/*",
+          "https://*.youtube.com/*",
           "https://www.youtube.com/*",
           "https://www.googleapis.com/*",
         ],
