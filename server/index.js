@@ -13,7 +13,14 @@ const RESTORE_CODE_SECRET = process.env.RESTORE_CODE_SECRET || "";
 const RESTORE_CODE_TTL_MINUTES = 10;
 const MAX_RESTORE_ATTEMPTS = 5;
 
-app.use(cors({ origin: "*", methods: ["GET", "POST", "PUT", "OPTIONS"], allowedHeaders: ["Content-Type", "Authorization"] }));\r\napp.options("*", cors());
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
+app.options("*", cors());
 app.use(express.json({ limit: "1mb" }));
 
 function mapChannelRow(row) {
@@ -49,7 +56,9 @@ function mapChannelRow(row) {
 }
 
 function normalizeEmail(rawEmail) {
-  return String(rawEmail ?? "").trim().toLowerCase();
+  return String(rawEmail ?? "")
+    .trim()
+    .toLowerCase();
 }
 
 function isValidEmail(email) {
@@ -64,7 +73,10 @@ function hashRestoreCode(code) {
   if (!RESTORE_CODE_SECRET) {
     throw new Error("Missing RESTORE_CODE_SECRET");
   }
-  return crypto.createHmac("sha256", RESTORE_CODE_SECRET).update(code).digest("hex");
+  return crypto
+    .createHmac("sha256", RESTORE_CODE_SECRET)
+    .update(code)
+    .digest("hex");
 }
 
 async function sendRestoreEmail(email, code) {
@@ -213,7 +225,9 @@ async function replaceChannels(customerId, channels) {
 
   try {
     await client.query("BEGIN");
-    await client.query("DELETE FROM channels WHERE customer_id = $1", [customerId]);
+    await client.query("DELETE FROM channels WHERE customer_id = $1", [
+      customerId,
+    ]);
 
     const insertText = `
       INSERT INTO channels (
@@ -367,7 +381,9 @@ app.post("/restore/verify", async (req, res) => {
     const expiresAt = new Date(record.expires_at).getTime();
     if (Number.isNaN(expiresAt) || expiresAt < Date.now()) {
       await deleteRestoreCode(email);
-      return res.status(410).json({ error: "Code expired. Request a new one." });
+      return res
+        .status(410)
+        .json({ error: "Code expired. Request a new one." });
     }
 
     if (record.attempts >= MAX_RESTORE_ATTEMPTS) {
@@ -391,7 +407,9 @@ app.post("/restore/verify", async (req, res) => {
 
     const paddleCustomerId = await fetchPaddleCustomerByEmail(email);
     if (!paddleCustomerId) {
-      return res.status(404).json({ error: "No customer found for that email." });
+      return res
+        .status(404)
+        .json({ error: "No customer found for that email." });
     }
 
     await ensureCustomer(paddleCustomerId, "paid");
@@ -410,4 +428,3 @@ await initDb();
 app.listen(PORT, () => {
   console.log(`HitTheBell backend listening on http://localhost:${PORT}`);
 });
-
