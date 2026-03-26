@@ -86,8 +86,9 @@ async function updateBadgeFromChannels(
 
 async function refreshAndMaybeNotify(
   reason: RefreshReason | undefined,
+  force?: boolean,
 ): Promise<ReturnType<typeof refreshAllChannels>> {
-  const result = await refreshAllChannels();
+  const result = await refreshAllChannels({ force });
   const channels = await getChannels();
   await updateBadgeFromChannels(channels);
   const channelById = new Map(channels.map((channel) => [channel.id, channel]));
@@ -211,7 +212,7 @@ browser.runtime.onMessage.addListener((message: unknown) => {
   }
 
   if (input.type === "REFRESH_ALL_CHANNELS") {
-    return refreshAndMaybeNotify(input.reason ?? "manual");
+    return refreshAndMaybeNotify(input.reason ?? "manual", input.force);
   }
 
   if (input.type === "MARK_CHANNEL_LATEST_SEEN") {
@@ -255,3 +256,5 @@ browser.tabs.onUpdated.addListener((tabId, info, tab) => {
   if (!url.includes("youtube.com")) return;
   void injectContentScripts();
 });
+
+

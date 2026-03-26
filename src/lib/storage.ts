@@ -12,6 +12,8 @@ const TRIAL_START_DATE_KEY = "trialStartDate";
 const HAS_PAID_ACCESS_KEY = "hasPaidAccess";
 const POPUP_SETTINGS_KEY = "popupSettings";
 const PADDLE_CUSTOMER_ID_KEY = "paddleCustomerId";
+const LAST_SYNC_EMAIL_KEY = "lastSyncEmail";
+const SYNC_ENABLED_KEY = "syncEnabled";
 const TRIAL_LENGTH_DAYS = 7;
 const TRIAL_LENGTH_MS = TRIAL_LENGTH_DAYS * 24 * 60 * 60 * 1000;
 const DEFAULT_POPUP_SETTINGS: PopupSettings = {
@@ -223,13 +225,33 @@ export async function setChannels(channels: Channel[]): Promise<Channel[]> {
   await browser.storage.sync.set({ [CHANNELS_KEY]: normalized });
 
   const paddleCustomerId = await getPaddleCustomerId();
-  if (paddleCustomerId) {
+  const syncEnabled = await getSyncEnabled();
+  if (paddleCustomerId && syncEnabled) {
     void syncChannelsToBackend(paddleCustomerId, normalized);
   }
 
   return normalized;
 }
 
+export async function getSyncEnabled(): Promise<boolean> {
+  const data = await browser.storage.sync.get(SYNC_ENABLED_KEY);
+  return typeof data[SYNC_ENABLED_KEY] === "boolean" ? data[SYNC_ENABLED_KEY] : false;
+}
+
+export async function setSyncEnabled(enabled: boolean): Promise<void> {
+  await browser.storage.sync.set({ [SYNC_ENABLED_KEY]: enabled });
+}
+export async function getLastSyncEmail(): Promise<string | null> {
+  const data = await browser.storage.sync.get(LAST_SYNC_EMAIL_KEY);
+  if (typeof data[LAST_SYNC_EMAIL_KEY] === "string") {
+    return data[LAST_SYNC_EMAIL_KEY];
+  }
+  return null;
+}
+
+export async function setLastSyncEmail(email: string | null): Promise<void> {
+  await browser.storage.sync.set({ [LAST_SYNC_EMAIL_KEY]: email });
+}
 export async function getPaddleCustomerId(): Promise<string | null> {
   const data = await browser.storage.sync.get(PADDLE_CUSTOMER_ID_KEY);
   if (typeof data[PADDLE_CUSTOMER_ID_KEY] === "string") {
@@ -254,7 +276,8 @@ export async function setPaddleCustomerId(paddleCustomerId: string | null): Prom
 
 export async function fetchAndMergeRemoteChannels(): Promise<Channel[] | null> {
   const paddleCustomerId = await getPaddleCustomerId();
-  if (!paddleCustomerId) return null;
+  const syncEnabled = await getSyncEnabled();
+  if (!paddleCustomerId || !syncEnabled) return null;
 
   const localChannels = await getChannels();
   const remote = await fetchCustomerFromBackend(paddleCustomerId);
@@ -374,3 +397,29 @@ export async function mutateChannels(
 export function isChannelLatestSeen(channel: Channel): boolean {
   return !channel.latestVideo || channel.lastSeenVideoId === channel.latestVideo.id;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

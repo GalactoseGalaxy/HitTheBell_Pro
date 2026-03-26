@@ -4,11 +4,16 @@ import {
   fetchAndMergeRemoteChannels,
   getChannels,
   getPaddleCustomerId,
+  getLastSyncEmail,
   getPopupSettings,
+  getSyncEnabled,
   getTrialAccessState,
   isChannelLatestSeen,
   mutateChannels,
+  setHasPaidAccess,
+  setLastSyncEmail,
   setPaddleCustomerId,
+  setSyncEnabled,
   setPopupSettings,
 } from "../lib/storage";
 import { shouldRefreshOnPopupOpen } from "../lib/channel-service";
@@ -22,6 +27,16 @@ import type { ExtensionMessage } from "../types";
 import type { Channel, PopupSettings, TrialAccessState } from "../types/storage";
 
 export default function Popup() {
+  const RESTORE_EMAIL_DRAFT_KEY = "restoreEmailDraft";
+  const SUBSCRIPTION_STATUS_OVERRIDE_KEY = "subscriptionStatusOverride";
+  const PAID_THROUGH_OVERRIDE_KEY = "paidThroughOverride";
+  const TRIAL_START_DATE_KEY = "trialStartDate";
+  const BACKEND_URL =
+    (import.meta as { env?: Record<string, string> }).env?.VITE_BACKEND_URL ||
+    "http://localhost:8787";
+  const MANAGE_SUBSCRIPTION_URL =
+    (import.meta as { env?: Record<string, string> }).env
+      ?.VITE_MANAGE_SUBSCRIPTION_URL || "https://hitthebell-pro.onrender.com/manage";
   const [channels, setChannels] = useState<Channel[]>([]);
   const [unfollowing, setUnfollowing] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -40,12 +55,15 @@ export default function Popup() {
   const [trialAccess, setTrialAccess] = useState<TrialAccessState | null>(null);
   const [paddleCustomerId, setPaddleCustomerIdState] = useState("");
   const [billingNotice, setBillingNotice] = useState<string | null>(null);
+  const [lastSyncEmail, setLastSyncEmailState] = useState<string | null>(null);
+  const [syncEnabled, setSyncEnabledState] = useState(false);
   const [restoreEmail, setRestoreEmail] = useState("");
   const [restoreCode, setRestoreCode] = useState("");
-  const [restoreStep, setRestoreStep] = useState<"idle" | "code">("idle");
   const [isRequestingCode, setIsRequestingCode] = useState(false);
   const [isVerifyingCode, setIsVerifyingCode] = useState(false);
   const [showRestoreForm, setShowRestoreForm] = useState(false);
+  const [overrideCanceled, setOverrideCanceled] = useState(false);
+  const [overridePaidThroughFuture, setOverridePaidThroughFuture] = useState(false);
   const hydrateState = useRef({ running: false, hydratedIds: new Set<string>() });
   const iconUrl = browser.runtime.getURL("icon.png");
   const isDark =
@@ -63,17 +81,70 @@ export default function Popup() {
       setIsLoading(true);
       try {
         void fetchAndMergeRemoteChannels().catch(() => undefined);
-        const [nextChannels, nextSettings, nextTrialAccess, nextPaddleId] =
+        const [
+          nextChannels,
+          nextSettings,
+          nextTrialAccess,
+          nextPaddleId,
+          nextLastEmail,
+          nextSyncEnabled,
+          nextDraftEmail,
+          overrideStatus,
+          overridePaidThrough,
+        ] =
           await Promise.all([
             getChannels(),
             getPopupSettings(),
             getTrialAccessState(),
             getPaddleCustomerId(),
+            getLastSyncEmail(),
+            getSyncEnabled(),
+            browser.storage.local
+              .get(RESTORE_EMAIL_DRAFT_KEY)
+              .then(
+                (data) =>
+                  (data as Record<string, unknown>)[RESTORE_EMAIL_DRAFT_KEY],
+              ),
+            browser.storage.local
+              .get(SUBSCRIPTION_STATUS_OVERRIDE_KEY)
+              .then(
+                (data) =>
+                  (data as Record<string, unknown>)[
+                    SUBSCRIPTION_STATUS_OVERRIDE_KEY
+                  ],
+              ),
+            browser.storage.local
+              .get(PAID_THROUGH_OVERRIDE_KEY)
+              .then(
+                (data) =>
+                  (data as Record<string, unknown>)[PAID_THROUGH_OVERRIDE_KEY],
+              ),
           ]);
         setChannels(nextChannels);
         setPopupSettingsState(nextSettings);
         setTrialAccess(nextTrialAccess);
         setPaddleCustomerIdState(nextPaddleId ?? "");
+        setLastSyncEmailState(nextLastEmail ?? null);
+        setSyncEnabledState(nextSyncEnabled);
+        const draftEmail =
+          typeof nextDraftEmail === "string" ? nextDraftEmail : null;
+        setRestoreEmail((current) => current || draftEmail || nextLastEmail || "");
+        setOverrideCanceled(
+          typeof overrideStatus === "string" &&
+            overrideStatus.toLowerCase() === "canceled",
+        );
+        const paidThroughMs =
+          typeof overridePaidThrough === "string"
+            ? new Date(overridePaidThrough).getTime()
+            : null;
+        setOverridePaidThroughFuture(
+          typeof paidThroughMs === "number" &&
+            !Number.isNaN(paidThroughMs) &&
+            paidThroughMs > Date.now(),
+        );
+        if (nextPaddleId && nextSyncEnabled) {
+          void refreshPaidStatus(nextPaddleId).catch(() => undefined);
+        }
         return {
           channels: nextChannels,
           settings: nextSettings,
@@ -107,9 +178,6 @@ export default function Popup() {
         settings: nextSettings,
       } = await load();
       if (nextTrialAccess.status === "expired") {
-        return;
-      }
-      if (nextSettings.debugForceLocked) {
         return;
       }
       void hydrateMissingDurations(nextChannels);
@@ -225,8 +293,9 @@ export default function Popup() {
 
   async function unfollow(id: string): Promise<void> {
     if (isLocked) return;
-    const updated = channels.filter((channel) => channel.id !== id);
-    await browser.storage.sync.set({ channels: updated });
+    const updated = await mutateChannels((channels) =>
+      channels.filter((channel) => channel.id !== id),
+    );
     setChannels(updated);
     setUnfollowing(null);
   }
@@ -252,13 +321,11 @@ export default function Popup() {
 
   async function toggleExcludeShorts(): Promise<void> {
     if (isLocked) return;
-    if (
-      excludeShortsCooldownUntil &&
-      Date.now() < excludeShortsCooldownUntil
-    ) {
+    if (excludeShortsCooldownUntil && Date.now() < excludeShortsCooldownUntil) {
       return;
     }
-
+    const nextCount = excludeShortsRefreshCount + 1;
+    const shouldLockout = nextCount >= 4;
     const nextSettings = await setPopupSettings({
       excludeShorts: !popupSettings.excludeShorts,
       themePreference: popupSettings.themePreference,
@@ -266,24 +333,23 @@ export default function Popup() {
     });
     setPopupSettingsState(nextSettings);
 
-    const nextCount = excludeShortsRefreshCount + 1;
-    if (nextCount >= 2) {
-      setExcludeShortsCooldownUntil(Date.now() + 30_000);
-      setExcludeShortsRefreshCount(0);
-      setCooldownTick(Date.now());
-    } else {
-      setExcludeShortsRefreshCount(nextCount);
-    }
-
     setIsRefreshing(true);
     try {
       await browser.runtime.sendMessage({
         type: "REFRESH_ALL_CHANNELS",
         reason: "manual",
+        force: true,
       } satisfies ExtensionMessage);
     } finally {
       setIsRefreshing(false);
       setChannels(await getChannels());
+      if (shouldLockout) {
+        setExcludeShortsCooldownUntil(Date.now() + 30_000);
+        setExcludeShortsRefreshCount(0);
+        setCooldownTick(Date.now());
+      } else {
+        setExcludeShortsRefreshCount(nextCount);
+      }
     }
   }
 
@@ -305,6 +371,148 @@ export default function Popup() {
     setPopupSettingsState(nextSettings);
   }
 
+  async function refreshPaidStatus(customerId: string): Promise<void> {
+    try {
+      const overrideData = await browser.storage.local.get([
+        SUBSCRIPTION_STATUS_OVERRIDE_KEY,
+        PAID_THROUGH_OVERRIDE_KEY,
+      ]);
+      const overrideStatus =
+        typeof overrideData[SUBSCRIPTION_STATUS_OVERRIDE_KEY] === "string"
+          ? String(overrideData[SUBSCRIPTION_STATUS_OVERRIDE_KEY]).toLowerCase()
+          : null;
+      const overridePaidThrough =
+        typeof overrideData[PAID_THROUGH_OVERRIDE_KEY] === "string"
+          ? new Date(String(overrideData[PAID_THROUGH_OVERRIDE_KEY])).getTime()
+          : null;
+      setOverrideCanceled(overrideStatus === "canceled");
+      setOverridePaidThroughFuture(
+        typeof overridePaidThrough === "number" &&
+          !Number.isNaN(overridePaidThrough) &&
+          overridePaidThrough > Date.now(),
+      );
+      if (overrideStatus) {
+        const paidThroughValid =
+          typeof overridePaidThrough === "number" &&
+          !Number.isNaN(overridePaidThrough) &&
+          overridePaidThrough > Date.now();
+        const isPaid =
+          overrideStatus === "active" ||
+          overrideStatus === "paid" ||
+          (overrideStatus === "canceled" && paidThroughValid);
+        await setHasPaidAccess(isPaid);
+        setTrialAccess(await getTrialAccessState());
+        return;
+      }
+
+      const response = await fetch(`${BACKEND_URL}/customers/${customerId}`);
+      if (!response.ok) return;
+      const payload = (await response.json()) as {
+        status?: string;
+        paidThrough?: string;
+      } | null;
+      if (!payload?.status) return;
+      const normalized = payload.status.toLowerCase();
+      const paidThroughMs = payload.paidThrough
+        ? new Date(payload.paidThrough).getTime()
+        : null;
+      const paidThroughValid =
+        typeof paidThroughMs === "number" &&
+        !Number.isNaN(paidThroughMs) &&
+        paidThroughMs > Date.now();
+      const isPaid =
+        normalized === "active" ||
+        normalized === "paid" ||
+        (normalized === "canceled" && paidThroughValid);
+      await setHasPaidAccess(isPaid);
+      setTrialAccess(await getTrialAccessState());
+    } catch {
+      // Ignore status refresh errors for now.
+    }
+  }
+
+  function handleManageSubscription(): void {
+    if (!MANAGE_SUBSCRIPTION_URL) return;
+    void browser.tabs.create({ url: MANAGE_SUBSCRIPTION_URL });
+  }
+
+  async function handleSimulateCanceled(): Promise<void> {
+    const customerId = await getPaddleCustomerId();
+    if (customerId) {
+      try {
+        await fetch(`${BACKEND_URL}/customers/${customerId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "canceled" }),
+        });
+      } catch {
+        // Ignore backend failures for now.
+      }
+    }
+    const paidThrough = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    await browser.storage.local.set({
+      [SUBSCRIPTION_STATUS_OVERRIDE_KEY]: "canceled",
+      [PAID_THROUGH_OVERRIDE_KEY]: paidThrough,
+    });
+    setOverrideCanceled(true);
+    setOverridePaidThroughFuture(true);
+    await setHasPaidAccess(true);
+    setTrialAccess(await getTrialAccessState());
+  }
+
+  async function handleSimulatePaidThroughExpired(): Promise<void> {
+    const paidThrough = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    await browser.storage.local.set({
+      [SUBSCRIPTION_STATUS_OVERRIDE_KEY]: "canceled",
+      [PAID_THROUGH_OVERRIDE_KEY]: paidThrough,
+    });
+    setOverrideCanceled(true);
+    setOverridePaidThroughFuture(false);
+    await setHasPaidAccess(false);
+    setTrialAccess(await getTrialAccessState());
+  }
+
+  async function toggleCanceledStatus(): Promise<void> {
+    const data = await browser.storage.local.get([
+      SUBSCRIPTION_STATUS_OVERRIDE_KEY,
+      PAID_THROUGH_OVERRIDE_KEY,
+    ]);
+    const currentStatus =
+      typeof data[SUBSCRIPTION_STATUS_OVERRIDE_KEY] === "string"
+        ? String(data[SUBSCRIPTION_STATUS_OVERRIDE_KEY]).toLowerCase()
+        : "active";
+    const nextStatus = currentStatus === "canceled" ? "active" : "canceled";
+    const paidThrough = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    await browser.storage.local.set({
+      [SUBSCRIPTION_STATUS_OVERRIDE_KEY]: nextStatus,
+      [PAID_THROUGH_OVERRIDE_KEY]: paidThrough,
+    });
+    setOverrideCanceled(nextStatus === "canceled");
+    setOverridePaidThroughFuture(true);
+    await setHasPaidAccess(nextStatus === "active");
+    setTrialAccess(await getTrialAccessState());
+  }
+
+  async function togglePaidThrough(): Promise<void> {
+    const data = await browser.storage.local.get(PAID_THROUGH_OVERRIDE_KEY);
+    const current =
+      typeof data[PAID_THROUGH_OVERRIDE_KEY] === "string"
+        ? new Date(String(data[PAID_THROUGH_OVERRIDE_KEY])).getTime()
+        : null;
+    const isFuture =
+      typeof current === "number" &&
+      !Number.isNaN(current) &&
+      current > Date.now();
+    const nextPaidThrough = isFuture
+      ? new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    await browser.storage.local.set({
+      [PAID_THROUGH_OVERRIDE_KEY]: nextPaidThrough,
+    });
+    setOverridePaidThroughFuture(!isFuture);
+    await refreshPaidStatus((await getPaddleCustomerId()) ?? "override");
+  }
+
   async function handleSavePaddleId(): Promise<void> {
     const trimmed = paddleCustomerId.trim();
     await setPaddleCustomerId(trimmed.length > 0 ? trimmed : null);
@@ -314,6 +522,9 @@ export default function Popup() {
   async function handleSubscribe(): Promise<void> {
     const result = await startCheckout();
     setBillingNotice(result.message);
+    await setHasPaidAccess(true);
+    await browser.storage.sync.set({ [TRIAL_START_DATE_KEY]: null });
+    setTrialAccess(await getTrialAccessState());
   }
 
   async function handleRequestRestoreCode(): Promise<void> {
@@ -327,7 +538,6 @@ export default function Popup() {
       const result = await requestRestoreCode(restoreEmail);
       setBillingNotice(result.message);
       if (result.ok) {
-        setRestoreStep("code");
       }
     } finally {
       setIsRequestingCode(false);
@@ -348,15 +558,31 @@ export default function Popup() {
     setIsVerifyingCode(true);
     try {
       const result = await verifyRestoreCode(restoreEmail, restoreCode);
-      setBillingNotice(result.message);
-      if (result.paddleCustomerId) {
-        await setPaddleCustomerId(result.paddleCustomerId);
-        setPaddleCustomerIdState(result.paddleCustomerId);
+      const missingPaddle =
+        result.message.toLowerCase().includes("missing paddle_api_key");
+      const simulatedCustomerId = "cus_test_123";
+      const effectiveCustomerId = result.paddleCustomerId ?? (missingPaddle ? simulatedCustomerId : null);
+      setBillingNotice(
+        missingPaddle
+          ? "Paddle not connected yet. Simulating customer cus_test_123 and syncing..."
+          : result.message,
+      );
+      if (effectiveCustomerId) {
+        const normalizedEmail = restoreEmail.trim().toLowerCase();
+        await setLastSyncEmail(normalizedEmail);
+        setLastSyncEmailState(normalizedEmail);
+        await setHasPaidAccess(true);
+        await browser.storage.sync.set({ [TRIAL_START_DATE_KEY]: null });
+        await setSyncEnabled(true);
+        setSyncEnabledState(true);
+        await setPaddleCustomerId(effectiveCustomerId);
+        setPaddleCustomerIdState(effectiveCustomerId);
+        await browser.storage.local.set({ [RESTORE_EMAIL_DRAFT_KEY]: normalizedEmail });
         await fetchAndMergeRemoteChannels();
         setChannels(await getChannels());
         setShowRestoreForm(false);
-        setRestoreStep("idle");
         setRestoreCode("");
+        setTrialAccess(await getTrialAccessState());
       }
     } finally {
       setIsVerifyingCode(false);
@@ -367,7 +593,6 @@ export default function Popup() {
     setShowRestoreForm((value) => {
       const next = !value;
       if (!next) {
-        setRestoreStep("idle");
         setRestoreCode("");
       }
       return next;
@@ -412,6 +637,7 @@ export default function Popup() {
     label: string;
     tone: string;
     showSubscribe: boolean;
+    showManage: boolean;
   } | null {
     if (!trialAccess) return null;
 
@@ -422,17 +648,12 @@ export default function Popup() {
           ? "border-[#184f38] bg-[#10281f] text-[#9fdfbf]"
           : "border-[#b7d7c1] bg-[#e8f5ec] text-[#1f6a45]",
         showSubscribe: false,
+        showManage: true,
       };
     }
 
-    if (trialAccess.status === "expired") {
-      return {
-        label: "Free trial ended",
-        tone: isDark
-          ? "border-[#5f2626] bg-[#2a1515] text-[#ffb3b3]"
-          : "border-[#efc1c1] bg-[#fff1f1] text-[#a33a3a]",
-        showSubscribe: true,
-      };
+    if (trialAccess.status === "expired" || popupSettings.debugForceLocked) {
+      return null;
     }
 
     const dayLabel =
@@ -446,14 +667,25 @@ export default function Popup() {
         ? "border-[#3b3b3b] bg-[#181818] text-[#d7d7d7]"
         : "border-[#d8d0c4] bg-[#f2ece1] text-[#5f584b]",
       showSubscribe: true,
+      showManage: false,
     };
   }
 
+  const isPaid = trialAccess?.status === "paid";
+  const effectiveTrialExpired =
+    !isPaid && (trialAccess?.status === "expired" || popupSettings.debugForceLocked);
   const trialBanner = getTrialBanner();
   const isLocked =
-    trialAccess?.status === "expired" || popupSettings.debugForceLocked;
+    effectiveTrialExpired && !(overrideCanceled && overridePaidThroughFuture);
   const channelLimit = 30;
   const slotsRemaining = Math.max(0, channelLimit - channels.length);
+  const syncStatus = isRequestingCode || isVerifyingCode
+    ? "Syncing..."
+    : syncEnabled
+      ? lastSyncEmail
+        ? `Sync: ${lastSyncEmail}`
+        : "Sync: Connected"
+      : "Sync: Off";
   const unwatchedChannels = channels.filter(
     (channel) => !isChannelLatestSeen(channel),
   );
@@ -677,7 +909,11 @@ export default function Popup() {
       <div className="mt-3 grid gap-2">
         <input
           value={restoreEmail}
-          onChange={(event) => setRestoreEmail(event.target.value)}
+          onChange={(event) => {
+            const value = event.target.value;
+            setRestoreEmail(value);
+            void browser.storage.local.set({ [RESTORE_EMAIL_DRAFT_KEY]: value });
+          }}
           placeholder="you@example.com"
           className={`h-8 w-full rounded-lg border px-2 text-[12px] outline-none ${
             isDark
@@ -685,53 +921,35 @@ export default function Popup() {
               : "border-[#ddd4c6] bg-white text-[#1c1914]"
           }`}
         />
-        {restoreStep === "code" && (
-          <input
-            value={restoreCode}
-            onChange={(event) => setRestoreCode(event.target.value)}
-            placeholder="Enter code"
-            className={`h-8 w-full rounded-lg border px-2 text-[12px] outline-none ${
-              isDark
-                ? "border-[#2b2b2b] bg-[#151515] text-white"
-                : "border-[#ddd4c6] bg-white text-[#1c1914]"
-            }`}
-          />
-        )}
+        <input
+          value={restoreCode}
+          onChange={(event) => setRestoreCode(event.target.value)}
+          placeholder="Enter code"
+          className={`h-8 w-full rounded-lg border px-2 text-[12px] outline-none ${
+            isDark
+              ? "border-[#2b2b2b] bg-[#151515] text-white"
+              : "border-[#ddd4c6] bg-white text-[#1c1914]"
+          }`}
+        />
         <div className="flex items-center gap-2">
-          {restoreStep === "code" ? (
-            <button
-              onClick={() => void handleVerifyRestoreCode()}
-              disabled={isVerifyingCode}
-              className={`h-8 flex-1 rounded-lg bg-[#ff4e45] px-3 text-[11px] font-semibold text-white transition-colors duration-150 hover:bg-[#ff5f57] ${
-                isVerifyingCode ? "opacity-60 cursor-not-allowed" : ""
-              }`}
-            >
-              Verify
-            </button>
-          ) : (
-            <button
-              onClick={() => void handleRequestRestoreCode()}
-              disabled={isRequestingCode}
-              className={`h-8 flex-1 rounded-lg bg-[#ff4e45] px-3 text-[11px] font-semibold text-white transition-colors duration-150 hover:bg-[#ff5f57] ${
-                isRequestingCode ? "opacity-60 cursor-not-allowed" : ""
-              }`}
-            >
-              Send code
-            </button>
-          )}
-          {restoreStep === "code" && (
-            <button
-              onClick={() => void handleRequestRestoreCode()}
-              disabled={isRequestingCode}
-              className={`h-8 rounded-lg border px-3 text-[11px] font-semibold transition-colors duration-150 ${
-                isDark
-                  ? "border-[#2b2b2b] text-[#d0d0d0] hover:bg-[#1c1c1c]"
-                  : "border-[#cfc6b8] text-[#5f584b] hover:bg-[#eee7da]"
-              } ${isRequestingCode ? "opacity-60 cursor-not-allowed" : ""}`}
-            >
-              Resend
-            </button>
-          )}
+          <button
+            onClick={() => void handleVerifyRestoreCode()}
+            disabled={isVerifyingCode}
+            className={`h-8 flex-1 rounded-lg bg-[#ff4e45] px-3 text-[11px] font-semibold text-white transition-colors duration-150 hover:bg-[#ff5f57] ${
+              isVerifyingCode ? "opacity-60 cursor-not-allowed" : ""
+            }`}
+          >{isVerifyingCode ? "Verifying..." : "Verify"}</button>
+          <button
+            onClick={() => void handleRequestRestoreCode()}
+            disabled={isRequestingCode}
+            className={`h-8 rounded-lg border px-3 text-[11px] font-semibold transition-colors duration-150 ${
+              isDark
+                ? "border-[#2b2b2b] text-[#d0d0d0] hover:bg-[#1c1c1c]"
+                : "border-[#cfc6b8] text-[#5f584b] hover:bg-[#eee7da]"
+            } ${isRequestingCode ? "opacity-60 cursor-not-allowed" : ""}`}
+          >
+            Send code
+          </button>
         </div>
         {billingNotice && (
           <div className={`text-[11px] ${theme.tertiaryText}`}>{billingNotice}</div>
@@ -750,18 +968,6 @@ export default function Popup() {
         {isRefreshing && (
           <div className={`text-[11px] ${theme.tertiaryText}`}>Refreshing...</div>
         )}
-        <button
-          onClick={() => void toggleDebugLock()}
-          title="Debug: force locked view"
-          className={`ml-1 flex items-center gap-2 rounded-full border-none bg-transparent px-1 py-0.5 transition-opacity duration-150 ${
-            popupSettings.debugForceLocked ? "opacity-90" : "opacity-70"
-          }`}
-        >
-          <span className={`text-[11px] font-medium ${theme.secondaryText}`}>
-            Debug Lock
-          </span>
-          {renderSettingToggle(popupSettings.debugForceLocked)}
-        </button>
         {!isLocked && (
           <>
             <button
@@ -817,9 +1023,8 @@ export default function Popup() {
                 isExcludeShortsLocked ? "opacity-60 cursor-not-allowed" : ""
               }`}
             >
-              <span className={`text-[11px] font-medium ${theme.secondaryText}`}>
+              <span className={`text-[11px] font-medium whitespace-nowrap ${theme.secondaryText}`}>
                 Exclude Shorts
-                {isExcludeShortsLocked ? ` (${excludeShortsCooldownSeconds}s)` : ""}
               </span>
               {renderSettingToggle(popupSettings.excludeShorts)}
             </button>
@@ -831,22 +1036,33 @@ export default function Popup() {
         {trialBanner && (
           <div className={`mx-4 mt-3 rounded-xl border px-3 py-2 text-[12px] font-medium ${trialBanner.tone}`}>
             <div className="flex items-center gap-2">
-              <span className="flex-1">{trialBanner.label}</span>
-              {trialBanner.showSubscribe && (
+              {trialBanner.showManage ? (
                 <button
-                  onClick={() => void handleSubscribe()}
+                  onClick={() => handleManageSubscription()}
                   className="rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-current transition-colors duration-150 hover:bg-white/20"
                 >
-                  Subscribe
+                  Manage subscription
                 </button>
-              )}
-              {trialBanner.showSubscribe && (
-                <button
-                  onClick={() => toggleRestoreForm()}
-                  className="rounded-full border border-white/20 px-2.5 py-1 text-[11px] font-semibold text-current transition-colors duration-150 hover:bg-white/10"
-                >
-                  Sync
-                </button>
+              ) : (
+                <>
+                  <span className="flex-1">{trialBanner.label}</span>
+                  {trialBanner.showSubscribe && (
+                    <button
+                      onClick={() => void handleSubscribe()}
+                      className="rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-current transition-colors duration-150 hover:bg-white/20"
+                    >
+                      Subscribe
+                    </button>
+                  )}
+                  {trialBanner.showSubscribe && (
+                    <button
+                      onClick={() => toggleRestoreForm()}
+                      className="rounded-full border border-white/20 px-2.5 py-1 text-[11px] font-semibold text-current transition-colors duration-150 hover:bg-white/10"
+                    >
+                      Sync
+                    </button>
+                  )}
+                </>
               )}
             </div>
             {renderRestoreForm()}
@@ -854,29 +1070,42 @@ export default function Popup() {
         )}
 
         {!isLocked && (
-          <div className={`mx-4 mt-2 text-[11px] ${theme.secondaryText}`}>
-            Slots remaining: {slotsRemaining} / {channelLimit}
+          <div className={`mx-4 mt-2 text-[11px] ${theme.secondaryText}`}>            Slots remaining: {slotsRemaining} / {channelLimit} · {syncStatus}
           </div>
         )}
 
         <div className="mx-4 mt-3 rounded-xl border border-dashed border-[#d8d0c4] px-3 py-2 text-[12px]">
           <div className={`mb-2 text-[11px] font-semibold ${theme.secondaryText}`}>
-            Paddle Customer ID (for sync)
+            Dev tools
           </div>
-          <div className="flex items-center gap-2">
-            <input
-              value={paddleCustomerId}
-              onChange={(event) => setPaddleCustomerIdState(event.target.value)}
-              placeholder="cus_..."
-              className={`h-8 flex-1 rounded-lg border px-2 text-[12px] outline-none ${
-                isDark ? "border-[#2b2b2b] bg-[#151515] text-white" : "border-[#ddd4c6] bg-white text-[#1c1914]"
-              }`}
-            />
+          <div className="grid gap-2">
             <button
-              onClick={() => void handleSavePaddleId()}
-              className="h-8 rounded-lg bg-[#ff4e45] px-3 text-[11px] font-semibold text-white transition-colors duration-150 hover:bg-[#ff5f57]"
+              onClick={() => void toggleDebugLock()}
+              title="Debug: force free-trial-ended view"
+              className="flex items-center justify-between rounded-lg border px-3 py-2"
             >
-              Save
+              <span className={`text-[11px] font-semibold ${theme.secondaryText}`}>
+                Free trial ({popupSettings.debugForceLocked ? "true" : "false"})
+              </span>
+              {renderSettingToggle(popupSettings.debugForceLocked)}
+            </button>
+            <button
+              onClick={() => void toggleCanceledStatus()}
+              className="flex items-center justify-between rounded-lg border px-3 py-2"
+            >
+              <span className={`text-[11px] font-semibold ${theme.secondaryText}`}>
+                Canceled ({overrideCanceled ? "true" : "false"})
+              </span>
+              {renderSettingToggle(overrideCanceled)}
+            </button>
+            <button
+              onClick={() => void togglePaidThrough()}
+              className="flex items-center justify-between rounded-lg border px-3 py-2"
+            >
+              <span className={`text-[11px] font-semibold ${theme.secondaryText}`}>
+                PaidThrough ({overridePaidThroughFuture ? "future" : "past"})
+              </span>
+              {renderSettingToggle(overridePaidThroughFuture)}
             </button>
           </div>
         </div>
@@ -885,7 +1114,7 @@ export default function Popup() {
           <div className="px-4 py-6">
             <div className={`rounded-2xl border px-4 py-5 text-center ${theme.paywallBg} ${theme.paywallBorder}`}>
               <div className={`text-[14px] font-semibold ${theme.paywallPrimary}`}>
-                Trial ended
+                Paid Period Ended
               </div>
               <div className={`mt-1 text-[12px] ${theme.paywallSecondary}`}>
                 Subscribe to keep tracking new uploads across your channels.
@@ -916,10 +1145,7 @@ export default function Popup() {
           </div>
         ) : channels.length === 0 ? (
           <div className={`p-5 text-[13px] text-center ${theme.secondaryText}`}>
-            Not following any channels yet.
-            <br />
-            Right-click any channel or video on YouTube and click "Follow
-            Channel".
+            Not following any channels yet.<br />On a YouTube video you want to track, open the bell menu and choose "Hit the Bell". Or right-click that video and click "Follow Channel".
           </div>
         ) : (
           <div className="mt-3">
@@ -959,3 +1185,30 @@ export default function Popup() {
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

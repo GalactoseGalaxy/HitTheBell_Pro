@@ -8,6 +8,7 @@ export interface FollowChannelFromContextMessage {
 export interface RefreshAllChannelsMessage {
   type: "REFRESH_ALL_CHANNELS";
   reason?: "startup" | "alarm" | "popup-open" | "manual";
+  force?: boolean;
 }
 
 export interface MarkChannelLatestSeenMessage {
@@ -37,3 +38,5 @@ export type ExtensionMessage =
   | MarkChannelLatestUnseenMessage
   | ShowToastMessage
   | ReinjectContentMessage;
+
+

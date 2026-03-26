@@ -13,7 +13,7 @@ const RESTORE_CODE_SECRET = process.env.RESTORE_CODE_SECRET || "";
 const RESTORE_CODE_TTL_MINUTES = 10;
 const MAX_RESTORE_ATTEMPTS = 5;
 
-app.use(cors());
+app.use(cors({ origin: "*", methods: ["GET", "POST", "PUT", "OPTIONS"], allowedHeaders: ["Content-Type", "Authorization"] }));\r\napp.options("*", cors());
 app.use(express.json({ limit: "1mb" }));
 
 function mapChannelRow(row) {
@@ -410,3 +410,4 @@ await initDb();
 app.listen(PORT, () => {
   console.log(`HitTheBell backend listening on http://localhost:${PORT}`);
 });
+

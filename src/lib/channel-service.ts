@@ -265,12 +265,13 @@ async function refreshSingleChannel(
   }
 }
 
-export async function refreshAllChannels(): Promise<RefreshAllChannelsResult> {
+export async function refreshAllChannels(options?: { force?: boolean }): Promise<RefreshAllChannelsResult> {
   if (refreshJob) {
     return refreshJob;
   }
 
   refreshJob = (async () => {
+    const forceRefresh = options?.force === true;
     if (!(await hasAccess())) {
       return {
         outcomes: [],
@@ -285,7 +286,7 @@ export async function refreshAllChannels(): Promise<RefreshAllChannelsResult> {
     const outcomes: RefreshOutcome[] = [];
 
     for (const channel of channels) {
-      if (!shouldRefreshChannel(channel)) {
+      if (!forceRefresh && !shouldRefreshChannel(channel)) {
         outcomes.push({
           type: "skipped",
           channelId: channel.id,
@@ -363,3 +364,5 @@ export async function markChannelLatestUnseen(
 
   return updatedChannel;
 }
+
+
