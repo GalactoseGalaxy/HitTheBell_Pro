@@ -5,7 +5,7 @@ import {
   markChannelLatestUnseen,
   refreshAllChannels,
 } from "../lib/channel-service";
-import { fetchAndMergeRemoteChannels, getChannels } from "../lib/storage";
+import { fetchAndMergeRemoteChannels, getChannels, mutateChannels } from "../lib/storage";
 import type {
   ExtensionMessage,
   RefreshAllChannelsMessage,
@@ -232,6 +232,12 @@ browser.runtime.onMessage.addListener((message: unknown) => {
   if (input.type === "REINJECT_CONTENT") {
     void injectContentScripts();
     return true;
+  }
+
+  if (input.type === "UNFOLLOW_CHANNEL") {
+    return mutateChannels((channels) =>
+      channels.filter((channel) => channel.id !== input.channelId),
+    );
   }
 
   return undefined;

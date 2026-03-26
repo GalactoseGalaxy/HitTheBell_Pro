@@ -47,6 +47,12 @@ function showToast(message: string, type: "success" | "error" | "info"): void {
   }, 3000);
 }
 
+function getFollowMenuItem(): HTMLElement | null {
+  return document.querySelector(
+    `#${FOLLOW_MENU_ITEM_ID}`,
+  ) as HTMLElement | null;
+}
+
 async function followCurrentChannel(): Promise<void> {
   try {
     const result = (await browser.runtime.sendMessage({
@@ -59,13 +65,115 @@ async function followCurrentChannel(): Promise<void> {
     if (result?.channel?.name) {
       const prefix = result.status === "already_following" ? "Already following" : "Now following";
       showToast(`${prefix} ${result.channel.name}`, result.status === "already_following" ? "info" : "success");
+      const item = getFollowMenuItem();
+      if (item) {
+        const list = findMenuList();
+        if (list) {
+          setMenuItemSelected(item, true);
+        }
+      }
       return;
     }
 
     showToast("Channel followed.", "success");
+    const item = getFollowMenuItem();
+    if (item) {
+      const list = findMenuList();
+      if (list) {
+        setMenuItemSelected(item, true);
+      }
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Follow failed.";
     showToast(message, "error");
+  }
+}
+
+async function unfollowCurrentChannel(): Promise<void> {
+  const channelId = extractChannelIdFromPage();
+  if (!channelId) {
+    showToast("Could not determine channel.", "error");
+    return;
+  }
+  try {
+    await browser.runtime.sendMessage({
+      type: "UNFOLLOW_CHANNEL",
+      channelId,
+    } satisfies ExtensionMessage);
+    showToast("Unfollowed channel.", "info");
+    const item = getFollowMenuItem();
+    if (item) {
+      const list = findMenuList();
+      if (list) {
+        setMenuItemSelected(item, false);
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unfollow failed.";
+    showToast(message, "error");
+  }
+}
+
+function extractChannelIdFromPage(): string | null {
+  const globalAny = globalThis as {
+    ytInitialPlayerResponse?: { videoDetails?: { channelId?: string } };
+    ytInitialData?: {
+      metadata?: { channelMetadataRenderer?: { externalId?: string } };
+    };
+  };
+  const fromPlayer =
+    globalAny.ytInitialPlayerResponse?.videoDetails?.channelId ?? null;
+  if (fromPlayer) return fromPlayer;
+  const fromMetadata =
+    globalAny.ytInitialData?.metadata?.channelMetadataRenderer?.externalId ?? null;
+  if (fromMetadata) return fromMetadata;
+
+  const html = document.documentElement.innerHTML;
+  const match =
+    html.match(/"channelId":"(UC[\w-]+)"/) ||
+    html.match(/"externalId":"(UC[\w-]+)"/);
+  return match?.[1] ?? null;
+}
+
+async function isCurrentChannelFollowed(): Promise<boolean> {
+  const channelId = extractChannelIdFromPage();
+  if (!channelId) return false;
+  try {
+    const data = await browser.storage.sync.get("channels");
+    const channels = Array.isArray((data as { channels?: unknown }).channels)
+      ? ((data as { channels?: { id?: unknown }[] }).channels ?? [])
+      : [];
+    return channels.some((channel) => channel?.id === channelId);
+  } catch {
+    return false;
+  }
+}
+
+function setMenuItemSelected(item: HTMLElement, selected: boolean): void {
+  const itemRoot = item.querySelector("tp-yt-paper-item") ?? item;
+  if (selected) {
+    item.classList.add("iron-selected");
+    item.setAttribute("iron-selected", "");
+    item.setAttribute("aria-selected", "true");
+    item.setAttribute("aria-checked", "true");
+    itemRoot.classList.add("iron-selected");
+    itemRoot.setAttribute("iron-selected", "");
+    itemRoot.setAttribute("aria-selected", "true");
+    itemRoot.setAttribute("aria-checked", "true");
+    item.classList.add("htb-selected");
+    itemRoot.classList.add("hit-the-bell-root");
+    (itemRoot as HTMLElement).style.setProperty("--htb-selected-bg", "#535353");
+  } else {
+    item.classList.remove("iron-selected");
+    item.removeAttribute("iron-selected");
+    item.removeAttribute("aria-selected");
+    item.removeAttribute("aria-checked");
+    itemRoot.classList.remove("iron-selected");
+    itemRoot.removeAttribute("iron-selected");
+    itemRoot.removeAttribute("aria-selected");
+    itemRoot.removeAttribute("aria-checked");
+    item.classList.remove("htb-selected");
+    itemRoot.classList.add("hit-the-bell-root");
   }
 }
 
@@ -137,6 +245,7 @@ function updateMenuLabel(item: Element, text: string): void {
 
   const span = document.createElement("span");
   span.dataset.hitTheBellLabel = "true";
+  span.className = "hit-the-bell-label";
   span.textContent = text;
   span.style.fontSize = "14px";
   span.style.fontWeight = "500";
@@ -216,12 +325,76 @@ function updateMenuIcon(item: Element): void {
   const itemRoot = item.querySelector("tp-yt-paper-item") ?? item;
   (itemRoot as HTMLElement).style.alignItems = "center";
   itemRoot.insertBefore(iconSpan, itemRoot.firstChild);
+
+  group.setAttribute("fill", "#ff0000");
+}
+
+function ensureMenuStyles(list: HTMLElement): void {
+  if (list.querySelector("style[data-hit-the-bell-style]")) return;
+  const style = document.createElement("style");
+  style.dataset.hitTheBellStyle = "true";
+  style.textContent = `
+    #${FOLLOW_MENU_ITEM_ID} .hit-the-bell-root {
+      background-color: transparent !important;
+      color: var(--yt-spec-text-primary, #0f0f0f);
+    }
+    #${FOLLOW_MENU_ITEM_ID}.htb-selected .hit-the-bell-root {
+      background-color: var(--htb-selected-bg, #535353) !important;
+      color: var(--htb-selected-text, var(--yt-spec-text-primary, #0f0f0f));
+    }
+    #${FOLLOW_MENU_ITEM_ID}.htb-selected .hit-the-bell-root::before,
+    #${FOLLOW_MENU_ITEM_ID}.htb-selected .hit-the-bell-root::after {
+      background-color: var(--htb-selected-bg, #535353) !important;
+    }
+    #${FOLLOW_MENU_ITEM_ID} .hit-the-bell-root:hover {
+      background-color: var(--htb-hover-bg, var(--yt-spec-10-percent-layer, rgba(0,0,0,0.08))) !important;
+    }
+    #${FOLLOW_MENU_ITEM_ID} .hit-the-bell-root:hover::before,
+    #${FOLLOW_MENU_ITEM_ID} .hit-the-bell-root:hover::after {
+      background-color: var(--htb-hover-bg, var(--yt-spec-10-percent-layer, rgba(0,0,0,0.08))) !important;
+    }
+    #${FOLLOW_MENU_ITEM_ID} .hit-the-bell-label {
+      color: inherit;
+    }
+  `;
+  list.appendChild(style);
+}
+
+function captureHoverColor(list: HTMLElement): void {
+  if ((list as HTMLElement & { _htbHoverBound?: boolean })._htbHoverBound) return;
+  (list as HTMLElement & { _htbHoverBound?: boolean })._htbHoverBound = true;
+  list.addEventListener(
+    "mouseover",
+    (event) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      const item = target.closest("ytd-menu-service-item-renderer");
+      if (!item || item.id === FOLLOW_MENU_ITEM_ID) return;
+      const root = item.querySelector("tp-yt-paper-item") ?? item;
+      if (!(root instanceof HTMLElement)) return;
+      const hoverColor = window.getComputedStyle(root).backgroundColor;
+      if (hoverColor && hoverColor !== "rgba(0, 0, 0, 0)") {
+        list.style.setProperty("--htb-hover-bg", hoverColor);
+      }
+    },
+    { capture: true },
+  );
 }
 
 function injectFollowMenuItem(): void {
   const list = findMenuList();
   if (!list) return;
-  if (list.querySelector(`#${FOLLOW_MENU_ITEM_ID}`)) return;
+  ensureMenuStyles(list);
+  captureHoverColor(list);
+  const existing = list.querySelector(
+    `#${FOLLOW_MENU_ITEM_ID}`,
+  ) as HTMLElement | null;
+  if (existing) {
+    void isCurrentChannelFollowed().then((followed) => {
+      setMenuItemSelected(existing, followed);
+    });
+    return;
+  }
 
   const firstItem = list.querySelector("ytd-menu-service-item-renderer");
   if (!firstItem) return;
@@ -231,6 +404,8 @@ function injectFollowMenuItem(): void {
   clone.removeAttribute("hidden");
   clone.setAttribute("role", "menuitem");
   clone.setAttribute("aria-label", MENU_TEXT);
+  const cloneRoot = clone.querySelector("tp-yt-paper-item") ?? clone;
+  cloneRoot.classList.add("hit-the-bell-root");
 
   updateMenuLabel(clone, MENU_TEXT);
   updateMenuIcon(clone);
@@ -238,13 +413,22 @@ function injectFollowMenuItem(): void {
   clone.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    void followCurrentChannel();
+    void isCurrentChannelFollowed().then((followed) => {
+      if (followed) {
+        void unfollowCurrentChannel();
+      } else {
+        void followCurrentChannel();
+      }
+    });
     document.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
     );
   });
 
   list.insertBefore(clone, list.firstChild);
+  void isCurrentChannelFollowed().then((followed) => {
+    setMenuItemSelected(clone, followed);
+  });
 }
 
 const observer = new MutationObserver(() => {

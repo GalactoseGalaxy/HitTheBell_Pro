@@ -5,6 +5,11 @@ export interface FollowChannelFromContextMessage {
   pageUrl?: string;
 }
 
+export interface UnfollowChannelMessage {
+  type: "UNFOLLOW_CHANNEL";
+  channelId: string;
+}
+
 export interface RefreshAllChannelsMessage {
   type: "REFRESH_ALL_CHANNELS";
   reason?: "startup" | "alarm" | "popup-open" | "manual";
@@ -33,6 +38,7 @@ export interface ReinjectContentMessage {
 
 export type ExtensionMessage =
   | FollowChannelFromContextMessage
+  | UnfollowChannelMessage
   | RefreshAllChannelsMessage
   | MarkChannelLatestSeenMessage
   | MarkChannelLatestUnseenMessage

@@ -28,8 +28,6 @@ import type { Channel, PopupSettings, TrialAccessState } from "../types/storage"
 
 export default function Popup() {
   const RESTORE_EMAIL_DRAFT_KEY = "restoreEmailDraft";
-  const SUBSCRIPTION_STATUS_OVERRIDE_KEY = "subscriptionStatusOverride";
-  const PAID_THROUGH_OVERRIDE_KEY = "paidThroughOverride";
   const TRIAL_START_DATE_KEY = "trialStartDate";
   const BACKEND_URL =
     (import.meta as { env?: Record<string, string> }).env?.VITE_BACKEND_URL ||
@@ -62,8 +60,6 @@ export default function Popup() {
   const [isRequestingCode, setIsRequestingCode] = useState(false);
   const [isVerifyingCode, setIsVerifyingCode] = useState(false);
   const [showRestoreForm, setShowRestoreForm] = useState(false);
-  const [overrideCanceled, setOverrideCanceled] = useState(false);
-  const [overridePaidThroughFuture, setOverridePaidThroughFuture] = useState(false);
   const hydrateState = useRef({ running: false, hydratedIds: new Set<string>() });
   const iconUrl = browser.runtime.getURL("icon.png");
   const isDark =
@@ -89,8 +85,6 @@ export default function Popup() {
           nextLastEmail,
           nextSyncEnabled,
           nextDraftEmail,
-          overrideStatus,
-          overridePaidThrough,
         ] =
           await Promise.all([
             getChannels(),
@@ -105,20 +99,6 @@ export default function Popup() {
                 (data) =>
                   (data as Record<string, unknown>)[RESTORE_EMAIL_DRAFT_KEY],
               ),
-            browser.storage.local
-              .get(SUBSCRIPTION_STATUS_OVERRIDE_KEY)
-              .then(
-                (data) =>
-                  (data as Record<string, unknown>)[
-                    SUBSCRIPTION_STATUS_OVERRIDE_KEY
-                  ],
-              ),
-            browser.storage.local
-              .get(PAID_THROUGH_OVERRIDE_KEY)
-              .then(
-                (data) =>
-                  (data as Record<string, unknown>)[PAID_THROUGH_OVERRIDE_KEY],
-              ),
           ]);
         setChannels(nextChannels);
         setPopupSettingsState(nextSettings);
@@ -129,19 +109,6 @@ export default function Popup() {
         const draftEmail =
           typeof nextDraftEmail === "string" ? nextDraftEmail : null;
         setRestoreEmail((current) => current || draftEmail || nextLastEmail || "");
-        setOverrideCanceled(
-          typeof overrideStatus === "string" &&
-            overrideStatus.toLowerCase() === "canceled",
-        );
-        const paidThroughMs =
-          typeof overridePaidThrough === "string"
-            ? new Date(overridePaidThrough).getTime()
-            : null;
-        setOverridePaidThroughFuture(
-          typeof paidThroughMs === "number" &&
-            !Number.isNaN(paidThroughMs) &&
-            paidThroughMs > Date.now(),
-        );
         if (nextPaddleId && nextSyncEnabled) {
           void refreshPaidStatus(nextPaddleId).catch(() => undefined);
         }
@@ -362,49 +329,8 @@ export default function Popup() {
     setPopupSettingsState(nextSettings);
   }
 
-  async function toggleDebugLock(): Promise<void> {
-    const nextSettings = await setPopupSettings({
-      excludeShorts: popupSettings.excludeShorts,
-      themePreference: popupSettings.themePreference,
-      debugForceLocked: !popupSettings.debugForceLocked,
-    });
-    setPopupSettingsState(nextSettings);
-  }
-
   async function refreshPaidStatus(customerId: string): Promise<void> {
     try {
-      const overrideData = await browser.storage.local.get([
-        SUBSCRIPTION_STATUS_OVERRIDE_KEY,
-        PAID_THROUGH_OVERRIDE_KEY,
-      ]);
-      const overrideStatus =
-        typeof overrideData[SUBSCRIPTION_STATUS_OVERRIDE_KEY] === "string"
-          ? String(overrideData[SUBSCRIPTION_STATUS_OVERRIDE_KEY]).toLowerCase()
-          : null;
-      const overridePaidThrough =
-        typeof overrideData[PAID_THROUGH_OVERRIDE_KEY] === "string"
-          ? new Date(String(overrideData[PAID_THROUGH_OVERRIDE_KEY])).getTime()
-          : null;
-      setOverrideCanceled(overrideStatus === "canceled");
-      setOverridePaidThroughFuture(
-        typeof overridePaidThrough === "number" &&
-          !Number.isNaN(overridePaidThrough) &&
-          overridePaidThrough > Date.now(),
-      );
-      if (overrideStatus) {
-        const paidThroughValid =
-          typeof overridePaidThrough === "number" &&
-          !Number.isNaN(overridePaidThrough) &&
-          overridePaidThrough > Date.now();
-        const isPaid =
-          overrideStatus === "active" ||
-          overrideStatus === "paid" ||
-          (overrideStatus === "canceled" && paidThroughValid);
-        await setHasPaidAccess(isPaid);
-        setTrialAccess(await getTrialAccessState());
-        return;
-      }
-
       const response = await fetch(`${BACKEND_URL}/customers/${customerId}`);
       if (!response.ok) return;
       const payload = (await response.json()) as {
@@ -436,83 +362,6 @@ export default function Popup() {
     void browser.tabs.create({ url: MANAGE_SUBSCRIPTION_URL });
   }
 
-  async function handleSimulateCanceled(): Promise<void> {
-    const customerId = await getPaddleCustomerId();
-    if (customerId) {
-      try {
-        await fetch(`${BACKEND_URL}/customers/${customerId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "canceled" }),
-        });
-      } catch {
-        // Ignore backend failures for now.
-      }
-    }
-    const paidThrough = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-    await browser.storage.local.set({
-      [SUBSCRIPTION_STATUS_OVERRIDE_KEY]: "canceled",
-      [PAID_THROUGH_OVERRIDE_KEY]: paidThrough,
-    });
-    setOverrideCanceled(true);
-    setOverridePaidThroughFuture(true);
-    await setHasPaidAccess(true);
-    setTrialAccess(await getTrialAccessState());
-  }
-
-  async function handleSimulatePaidThroughExpired(): Promise<void> {
-    const paidThrough = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    await browser.storage.local.set({
-      [SUBSCRIPTION_STATUS_OVERRIDE_KEY]: "canceled",
-      [PAID_THROUGH_OVERRIDE_KEY]: paidThrough,
-    });
-    setOverrideCanceled(true);
-    setOverridePaidThroughFuture(false);
-    await setHasPaidAccess(false);
-    setTrialAccess(await getTrialAccessState());
-  }
-
-  async function toggleCanceledStatus(): Promise<void> {
-    const data = await browser.storage.local.get([
-      SUBSCRIPTION_STATUS_OVERRIDE_KEY,
-      PAID_THROUGH_OVERRIDE_KEY,
-    ]);
-    const currentStatus =
-      typeof data[SUBSCRIPTION_STATUS_OVERRIDE_KEY] === "string"
-        ? String(data[SUBSCRIPTION_STATUS_OVERRIDE_KEY]).toLowerCase()
-        : "active";
-    const nextStatus = currentStatus === "canceled" ? "active" : "canceled";
-    const paidThrough = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-    await browser.storage.local.set({
-      [SUBSCRIPTION_STATUS_OVERRIDE_KEY]: nextStatus,
-      [PAID_THROUGH_OVERRIDE_KEY]: paidThrough,
-    });
-    setOverrideCanceled(nextStatus === "canceled");
-    setOverridePaidThroughFuture(true);
-    await setHasPaidAccess(nextStatus === "active");
-    setTrialAccess(await getTrialAccessState());
-  }
-
-  async function togglePaidThrough(): Promise<void> {
-    const data = await browser.storage.local.get(PAID_THROUGH_OVERRIDE_KEY);
-    const current =
-      typeof data[PAID_THROUGH_OVERRIDE_KEY] === "string"
-        ? new Date(String(data[PAID_THROUGH_OVERRIDE_KEY])).getTime()
-        : null;
-    const isFuture =
-      typeof current === "number" &&
-      !Number.isNaN(current) &&
-      current > Date.now();
-    const nextPaidThrough = isFuture
-      ? new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-    await browser.storage.local.set({
-      [PAID_THROUGH_OVERRIDE_KEY]: nextPaidThrough,
-    });
-    setOverridePaidThroughFuture(!isFuture);
-    await refreshPaidStatus((await getPaddleCustomerId()) ?? "override");
-  }
-
   async function handleSavePaddleId(): Promise<void> {
     const trimmed = paddleCustomerId.trim();
     await setPaddleCustomerId(trimmed.length > 0 ? trimmed : null);
@@ -522,9 +371,11 @@ export default function Popup() {
   async function handleSubscribe(): Promise<void> {
     const result = await startCheckout();
     setBillingNotice(result.message);
-    await setHasPaidAccess(true);
-    await browser.storage.sync.set({ [TRIAL_START_DATE_KEY]: null });
-    setTrialAccess(await getTrialAccessState());
+    const currentCustomerId = await getPaddleCustomerId();
+    if (currentCustomerId) {
+      await refreshPaidStatus(currentCustomerId);
+      setTrialAccess(await getTrialAccessState());
+    }
   }
 
   async function handleRequestRestoreCode(): Promise<void> {
@@ -571,14 +422,13 @@ export default function Popup() {
         const normalizedEmail = restoreEmail.trim().toLowerCase();
         await setLastSyncEmail(normalizedEmail);
         setLastSyncEmailState(normalizedEmail);
-        await setHasPaidAccess(true);
-        await browser.storage.sync.set({ [TRIAL_START_DATE_KEY]: null });
         await setSyncEnabled(true);
         setSyncEnabledState(true);
         await setPaddleCustomerId(effectiveCustomerId);
         setPaddleCustomerIdState(effectiveCustomerId);
         await browser.storage.local.set({ [RESTORE_EMAIL_DRAFT_KEY]: normalizedEmail });
         await fetchAndMergeRemoteChannels();
+        await refreshPaidStatus(effectiveCustomerId);
         setChannels(await getChannels());
         setShowRestoreForm(false);
         setRestoreCode("");
@@ -652,7 +502,7 @@ export default function Popup() {
       };
     }
 
-    if (trialAccess.status === "expired" || popupSettings.debugForceLocked) {
+    if (trialAccess.status === "expired") {
       return null;
     }
 
@@ -672,11 +522,9 @@ export default function Popup() {
   }
 
   const isPaid = trialAccess?.status === "paid";
-  const effectiveTrialExpired =
-    !isPaid && (trialAccess?.status === "expired" || popupSettings.debugForceLocked);
+  const effectiveTrialExpired = !isPaid && trialAccess?.status === "expired";
   const trialBanner = getTrialBanner();
-  const isLocked =
-    effectiveTrialExpired && !(overrideCanceled && overridePaidThroughFuture);
+  const isLocked = effectiveTrialExpired;
   const channelLimit = 30;
   const slotsRemaining = Math.max(0, channelLimit - channels.length);
   const syncStatus = isRequestingCode || isVerifyingCode
@@ -1074,41 +922,6 @@ export default function Popup() {
           </div>
         )}
 
-        <div className="mx-4 mt-3 rounded-xl border border-dashed border-[#d8d0c4] px-3 py-2 text-[12px]">
-          <div className={`mb-2 text-[11px] font-semibold ${theme.secondaryText}`}>
-            Dev tools
-          </div>
-          <div className="grid gap-2">
-            <button
-              onClick={() => void toggleDebugLock()}
-              title="Debug: force free-trial-ended view"
-              className="flex items-center justify-between rounded-lg border px-3 py-2"
-            >
-              <span className={`text-[11px] font-semibold ${theme.secondaryText}`}>
-                Free trial ({popupSettings.debugForceLocked ? "true" : "false"})
-              </span>
-              {renderSettingToggle(popupSettings.debugForceLocked)}
-            </button>
-            <button
-              onClick={() => void toggleCanceledStatus()}
-              className="flex items-center justify-between rounded-lg border px-3 py-2"
-            >
-              <span className={`text-[11px] font-semibold ${theme.secondaryText}`}>
-                Canceled ({overrideCanceled ? "true" : "false"})
-              </span>
-              {renderSettingToggle(overrideCanceled)}
-            </button>
-            <button
-              onClick={() => void togglePaidThrough()}
-              className="flex items-center justify-between rounded-lg border px-3 py-2"
-            >
-              <span className={`text-[11px] font-semibold ${theme.secondaryText}`}>
-                PaidThrough ({overridePaidThroughFuture ? "future" : "past"})
-              </span>
-              {renderSettingToggle(overridePaidThroughFuture)}
-            </button>
-          </div>
-        </div>
 
         {isLocked ? (
           <div className="px-4 py-6">
