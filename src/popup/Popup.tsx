@@ -374,14 +374,16 @@ export default function Popup() {
   async function handleSubscribe(): Promise<void> {
     const email = restoreEmail || lastSyncEmail || undefined;
     const result = await startCheckout(email);
-    setBillingNotice(result.message);
     if (result.checkoutUrl) {
-      void browser.tabs.create({ url: result.checkoutUrl });
-    }
-    const currentCustomerId = await getPaddleCustomerId();
-    if (currentCustomerId) {
-      await refreshPaidStatus(currentCustomerId);
-      setTrialAccess(await getTrialAccessState());
+      void browser.windows.create({
+        url: result.checkoutUrl,
+        type: "popup",
+        width: 540,
+        height: 720,
+        focused: true,
+      });
+    } else {
+      setBillingNotice(result.message);
     }
   }
 

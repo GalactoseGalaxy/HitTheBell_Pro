@@ -8,6 +8,14 @@ export default defineConfig({
     react(),
     tailwindcss(),
     webExtension({
+      additionalInputs: {
+        html: [
+          {
+            fileName: "src/checkout/index.html",
+            webAccessible: false,
+          },
+        ],
+      },
       manifest: {
         manifest_version: 2,
         name: "HitTheBell Pro",
@@ -44,6 +52,7 @@ export default defineConfig({
         permissions: [
           "storage",
           "tabs",
+          "windows",
           "contextMenus",
           "alarms",
           "notifications",

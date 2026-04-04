@@ -9,6 +9,14 @@ export default defineConfig({
     tailwindcss(),
     webExtension({
       useDynamicUrlWebAccessibleResources: false,
+      additionalInputs: {
+        html: [
+          {
+            fileName: "src/checkout/index.html",
+            webAccessible: false,
+          },
+        ],
+      },
       manifest: {
         name: "HitTheBell Pro",
         description: "A browser extension built with React and TypeScript.",
@@ -46,6 +54,7 @@ export default defineConfig({
         permissions: [
           "storage",
           "tabs",
+          "windows",
           "scripting",
           "contextMenus",
           "alarms",

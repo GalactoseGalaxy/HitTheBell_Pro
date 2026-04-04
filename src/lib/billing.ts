@@ -1,4 +1,5 @@
-import { BACKEND_URL, PADDLE_CHECKOUT_URL } from "./config";
+import { BACKEND_URL } from "./config";
+import browser from "webextension-polyfill";
 
 export interface BillingActionResult {
   message: string;
@@ -12,13 +13,8 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export async function startCheckout(
   email?: string,
 ): Promise<BillingActionResult> {
-  if (!PADDLE_CHECKOUT_URL) {
-    return {
-      message: "Checkout will be wired up when Paddle is connected.",
-    };
-  }
-
-  const url = new URL(PADDLE_CHECKOUT_URL);
+  const base = browser.runtime.getURL("src/checkout/index.html");
+  const url = new URL(base);
   if (email) {
     url.searchParams.set("email", email);
   }
