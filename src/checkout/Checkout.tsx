@@ -189,19 +189,25 @@ export default function Checkout() {
           >
             <div className="flex items-center justify-between">
               <div>
-                <div className={`text-[13px] font-semibold ${textPrimary}`}>
-                  Yearly
+                <div className="flex items-center gap-2">
+                  <span className={`text-[13px] font-semibold ${textPrimary}`}>
+                    Yearly
+                  </span>
+                  <span className="rounded-full bg-[#ff4e45] px-2 py-0.5 text-[10px] font-bold text-white">
+                    BEST VALUE
+                  </span>
                 </div>
                 <div className={`mt-0.5 text-[12px] ${textSecondary}`}>
-                  Billed once a year
+                  Billed once a year · save 33%
                 </div>
               </div>
-              <div className="flex flex-col items-end gap-1">
-                <span className="rounded-full bg-[#ff4e45] px-2 py-0.5 text-[10px] font-bold text-white">
-                  BEST VALUE
-                </span>
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <div className={`text-[15px] font-bold ${textPrimary}`}>$23.99</div>
+                  <div className={`text-[11px] ${textSecondary}`}>$2.00&thinsp;/&thinsp;mo</div>
+                </div>
                 <div
-                  className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                  className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
                     selectedPlan === "yearly"
                       ? "border-[#ff4e45] bg-[#ff4e45]"
                       : isDark
@@ -233,18 +239,24 @@ export default function Checkout() {
                   Billed every month
                 </div>
               </div>
-              <div
-                className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                  selectedPlan === "monthly"
-                    ? "border-[#ff4e45] bg-[#ff4e45]"
-                    : isDark
-                      ? "border-[#555]"
-                      : "border-[#ccc2b3]"
-                }`}
-              >
-                {selectedPlan === "monthly" && (
-                  <div className="w-1.5 h-1.5 rounded-full bg-white" />
-                )}
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <div className={`text-[15px] font-bold ${textPrimary}`}>$2.99</div>
+                  <div className={`text-[11px] ${textSecondary}`}>per month</div>
+                </div>
+                <div
+                  className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                    selectedPlan === "monthly"
+                      ? "border-[#ff4e45] bg-[#ff4e45]"
+                      : isDark
+                        ? "border-[#555]"
+                        : "border-[#ccc2b3]"
+                  }`}
+                >
+                  {selectedPlan === "monthly" && (
+                    <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                  )}
+                </div>
               </div>
             </div>
           </button>
