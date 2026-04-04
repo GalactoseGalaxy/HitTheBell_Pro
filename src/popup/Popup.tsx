@@ -372,8 +372,12 @@ export default function Popup() {
   }
 
   async function handleSubscribe(): Promise<void> {
-    const result = await startCheckout();
+    const email = restoreEmail || lastSyncEmail || undefined;
+    const result = await startCheckout(email);
     setBillingNotice(result.message);
+    if (result.checkoutUrl) {
+      void browser.tabs.create({ url: result.checkoutUrl });
+    }
     const currentCustomerId = await getPaddleCustomerId();
     if (currentCustomerId) {
       await refreshPaidStatus(currentCustomerId);

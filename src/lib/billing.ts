@@ -1,16 +1,32 @@
-import { BACKEND_URL } from "./config";
+import { BACKEND_URL, PADDLE_CHECKOUT_URL } from "./config";
 
 export interface BillingActionResult {
   message: string;
   paddleCustomerId?: string;
+  checkoutUrl?: string;
   ok?: boolean;
 }
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export async function startCheckout(): Promise<BillingActionResult> {
+export async function startCheckout(
+  email?: string,
+): Promise<BillingActionResult> {
+  if (!PADDLE_CHECKOUT_URL) {
+    return {
+      message: "Checkout will be wired up when Paddle is connected.",
+    };
+  }
+
+  const url = new URL(PADDLE_CHECKOUT_URL);
+  if (email) {
+    url.searchParams.set("email", email);
+  }
+
   return {
-    message: "Checkout will be wired up when Paddle is connected.",
+    message: "Opening checkout…",
+    checkoutUrl: url.toString(),
+    ok: true,
   };
 }
 

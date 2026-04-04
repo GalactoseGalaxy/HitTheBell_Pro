@@ -49,6 +49,11 @@ export async function initDb() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+
+  await pool.query(`
+    ALTER TABLE customers
+      ADD COLUMN IF NOT EXISTS paid_through TIMESTAMPTZ;
+  `);
 }
 
 export function getPool() {

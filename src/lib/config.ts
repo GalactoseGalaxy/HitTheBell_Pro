@@ -4,3 +4,6 @@ export const BACKEND_URL =
 export const MANAGE_SUBSCRIPTION_URL =
   import.meta.env.VITE_MANAGE_SUBSCRIPTION_URL ||
   "https://hitthebell-pro.onrender.com/manage";
+
+export const PADDLE_CHECKOUT_URL =
+  import.meta.env.VITE_PADDLE_CHECKOUT_URL || "";

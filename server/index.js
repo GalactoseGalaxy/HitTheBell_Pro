@@ -10,6 +10,8 @@ const PADDLE_API_BASE = process.env.PADDLE_API_BASE || "https://api.paddle.com";
 const POSTMARK_API_TOKEN = process.env.POSTMARK_API_TOKEN || "";
 const POSTMARK_FROM = process.env.POSTMARK_FROM || "";
 const RESTORE_CODE_SECRET = process.env.RESTORE_CODE_SECRET || "";
+const PADDLE_WEBHOOK_SECRET = process.env.PADDLE_WEBHOOK_SECRET || "";
+const DEBUG_MODE = process.env.DEBUG_MODE === "true";
 const RESTORE_CODE_TTL_MINUTES = 10;
 const MAX_RESTORE_ATTEMPTS = 5;
 
@@ -21,6 +23,103 @@ app.use(
   }),
 );
 app.options("*", cors());
+
+// Webhook route must be registered BEFORE express.json() so we can read
+// the raw body for HMAC signature verification.
+app.post(
+  "/webhooks/paddle",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    // Respond immediately — Paddle retries on slow responses.
+    res.sendStatus(200);
+
+    try {
+      const rawBody =
+        req.body instanceof Buffer ? req.body.toString("utf8") : String(req.body);
+
+      // Verify Paddle v2 signature: "ts=<timestamp>;h1=<hmac_sha256_hex>"
+      const sigHeader = req.headers["paddle-signature"] ?? "";
+      const tsMatch = sigHeader.match(/ts=(\d+)/);
+      const h1Match = sigHeader.match(/h1=([a-f0-9]+)/);
+
+      if (!tsMatch || !h1Match) {
+        console.warn("[Paddle webhook] Missing signature header parts");
+        return;
+      }
+
+      const ts = tsMatch[1];
+      const receivedHex = h1Match[1];
+      const expectedHex = crypto
+        .createHmac("sha256", PADDLE_WEBHOOK_SECRET)
+        .update(`${ts}:${rawBody}`)
+        .digest("hex");
+
+      const expected = Buffer.from(expectedHex, "hex");
+      const received = Buffer.from(receivedHex, "hex");
+      if (
+        expected.length !== received.length ||
+        !crypto.timingSafeEqual(expected, received)
+      ) {
+        console.warn("[Paddle webhook] Invalid signature — ignoring");
+        return;
+      }
+
+      const event = JSON.parse(rawBody);
+      const eventType = event?.event_type;
+      const data = event?.data ?? {};
+      const paddleCustomerId = data?.customer_id;
+      const endsAt = data?.current_billing_period?.ends_at ?? null;
+
+      if (!paddleCustomerId) {
+        console.warn("[Paddle webhook] No customer_id in event:", eventType);
+        return;
+      }
+
+      let internalStatus;
+      switch (eventType) {
+        case "subscription.activated":
+          internalStatus = "active";
+          break;
+        case "subscription.updated": {
+          const s = (data?.status ?? "").toLowerCase();
+          internalStatus = ["active", "paused", "past_due", "canceled"].includes(s)
+            ? s
+            : "active";
+          break;
+        }
+        case "subscription.canceled":
+          internalStatus = "canceled";
+          break;
+        case "subscription.past_due":
+          internalStatus = "past_due";
+          break;
+        default:
+          return; // Unhandled event — ignore silently
+      }
+
+      const pool = getPool();
+      await pool.query(
+        `
+          INSERT INTO customers (paddle_customer_id, status, paid_through)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (paddle_customer_id)
+          DO UPDATE SET
+            status = EXCLUDED.status,
+            paid_through = EXCLUDED.paid_through,
+            updated_at = NOW();
+        `,
+        [paddleCustomerId, internalStatus, endsAt],
+      );
+
+      console.log(
+        `[Paddle webhook] ${eventType}: ${paddleCustomerId} → ${internalStatus}, paid_through=${endsAt}`,
+      );
+    } catch (err) {
+      console.error("[Paddle webhook] Processing error:", err);
+    }
+  },
+);
+
 app.use(express.json({ limit: "1mb" }));
 
 function mapChannelRow(row) {
@@ -198,6 +297,7 @@ async function getCustomerByPaddleId(paddleCustomerId) {
   return {
     paddleCustomerId: customer.paddle_customer_id,
     status: customer.status,
+    paidThrough: customer.paid_through?.toISOString() ?? null,
     createdAt: customer.created_at.toISOString(),
     updatedAt: customer.updated_at.toISOString(),
     channels: channelResult.rows.map(mapChannelRow),
@@ -302,6 +402,37 @@ async function replaceChannels(customerId, channels) {
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
+
+if (DEBUG_MODE) {
+  app.post("/debug/simulate-webhook", async (req, res) => {
+    try {
+      const { paddleCustomerId, status, paidThrough } = req.body ?? {};
+      if (!paddleCustomerId || !status) {
+        return res
+          .status(400)
+          .json({ error: "paddleCustomerId and status are required." });
+      }
+      const pool = getPool();
+      await pool.query(
+        `
+          INSERT INTO customers (paddle_customer_id, status, paid_through)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (paddle_customer_id)
+          DO UPDATE SET
+            status = EXCLUDED.status,
+            paid_through = EXCLUDED.paid_through,
+            updated_at = NOW();
+        `,
+        [paddleCustomerId, status, paidThrough ?? null],
+      );
+      const customer = await getCustomerByPaddleId(paddleCustomerId);
+      return res.json({ ok: true, customer });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Simulation failed.";
+      return res.status(500).json({ error: message });
+    }
+  });
+}
 
 app.get("/customers/:paddleCustomerId", async (req, res) => {
   const { paddleCustomerId } = req.params;
