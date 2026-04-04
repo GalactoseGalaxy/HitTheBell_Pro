@@ -248,6 +248,13 @@ browser.notifications.onClicked.addListener((notificationId) => {
   if (!target) return;
   notificationTargets.delete(notificationId);
   void browser.tabs.create({ url: target.url });
+  void markChannelLatestSeen(target.channelId).then(() =>
+    getChannels().then(updateBadgeFromChannels),
+  );
+});
+
+browser.notifications.onClosed.addListener((notificationId) => {
+  notificationTargets.delete(notificationId);
 });
 
 browser.storage.onChanged.addListener((changes, areaName) => {

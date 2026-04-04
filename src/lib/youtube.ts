@@ -1,5 +1,5 @@
 import type { Channel, LatestVideo } from "../types";
-import { getCachedVideoDurations, setCachedVideoDurations } from "./video-duration-cache";import { getCachedVideoDetails, setCachedVideoDetails } from "./video-details-cache";
+import { getCachedVideoDurations, setCachedVideoDurations } from "./video-duration-cache";
 const API_KEY = import.meta.env.VITE_YOUTUBE_API_KEY;
 const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
 const YOUTUBE_HOSTS = new Set([

@@ -16,25 +16,21 @@ import {
   setSyncEnabled,
   setPopupSettings,
 } from "../lib/storage";
-import { shouldRefreshOnPopupOpen } from "../lib/channel-service";
+import { CHANNEL_LIMIT, shouldRefreshOnPopupOpen } from "../lib/channel-service";
 import { fetchVideoDurations } from "../lib/youtube";
 import {
   requestRestoreCode,
   startCheckout,
   verifyRestoreCode,
 } from "../lib/billing";
+import { BACKEND_URL, MANAGE_SUBSCRIPTION_URL } from "../lib/config";
 import type { ExtensionMessage } from "../types";
 import type { Channel, PopupSettings, TrialAccessState } from "../types/storage";
 
+const RESTORE_EMAIL_DRAFT_KEY = "restoreEmailDraft";
+const TRIAL_START_DATE_KEY = "trialStartDate";
+
 export default function Popup() {
-  const RESTORE_EMAIL_DRAFT_KEY = "restoreEmailDraft";
-  const TRIAL_START_DATE_KEY = "trialStartDate";
-  const BACKEND_URL =
-    (import.meta as { env?: Record<string, string> }).env?.VITE_BACKEND_URL ||
-    "http://localhost:8787";
-  const MANAGE_SUBSCRIPTION_URL =
-    (import.meta as { env?: Record<string, string> }).env
-      ?.VITE_MANAGE_SUBSCRIPTION_URL || "https://hitthebell-pro.onrender.com/manage";
   const [channels, setChannels] = useState<Channel[]>([]);
   const [unfollowing, setUnfollowing] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -60,7 +56,9 @@ export default function Popup() {
   const [isRequestingCode, setIsRequestingCode] = useState(false);
   const [isVerifyingCode, setIsVerifyingCode] = useState(false);
   const [showRestoreForm, setShowRestoreForm] = useState(false);
+  const [codeSent, setCodeSent] = useState(false);
   const hydrateState = useRef({ running: false, hydratedIds: new Set<string>() });
+  const storageDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const iconUrl = browser.runtime.getURL("icon.png");
   const isDark =
     popupSettings.themePreference === "system"
@@ -135,7 +133,11 @@ export default function Popup() {
       ) {
         return;
       }
-      void load();
+      if (storageDebounceRef.current !== null) clearTimeout(storageDebounceRef.current);
+      storageDebounceRef.current = setTimeout(() => {
+        storageDebounceRef.current = null;
+        void load();
+      }, 500);
     }
 
     async function refreshOnOpen(): Promise<void> {
@@ -170,6 +172,7 @@ export default function Popup() {
 
     return () => {
       browser.storage.onChanged.removeListener(handleStorageChange);
+      if (storageDebounceRef.current !== null) clearTimeout(storageDebounceRef.current);
     };
   }, []);
 
@@ -380,7 +383,7 @@ export default function Popup() {
 
   async function handleRequestRestoreCode(): Promise<void> {
     if (!restoreEmail.trim()) {
-      setBillingNotice("Please enter the email you used to purchase HitTheBell.");
+      setBillingNotice("Please enter the email used for purchase.");
       return;
     }
 
@@ -389,6 +392,7 @@ export default function Popup() {
       const result = await requestRestoreCode(restoreEmail);
       setBillingNotice(result.message);
       if (result.ok) {
+        setCodeSent(true);
       }
     } finally {
       setIsRequestingCode(false);
@@ -397,7 +401,7 @@ export default function Popup() {
 
   async function handleVerifyRestoreCode(): Promise<void> {
     if (!restoreEmail.trim()) {
-      setBillingNotice("Please enter the email you used to purchase HitTheBell.");
+      setBillingNotice("Please enter the email used for purchase.");
       return;
     }
 
@@ -432,6 +436,8 @@ export default function Popup() {
         setChannels(await getChannels());
         setShowRestoreForm(false);
         setRestoreCode("");
+        setCodeSent(false);
+        setBillingNotice(null);
         setTrialAccess(await getTrialAccessState());
       }
     } finally {
@@ -444,6 +450,8 @@ export default function Popup() {
       const next = !value;
       if (!next) {
         setRestoreCode("");
+        setCodeSent(false);
+        setBillingNotice(null);
       }
       return next;
     });
@@ -524,9 +532,8 @@ export default function Popup() {
   const isPaid = trialAccess?.status === "paid";
   const effectiveTrialExpired = !isPaid && trialAccess?.status === "expired";
   const trialBanner = getTrialBanner();
-  const isLocked = effectiveTrialExpired;
-  const channelLimit = 30;
-  const slotsRemaining = Math.max(0, channelLimit - channels.length);
+  const isLocked = effectiveTrialExpired || popupSettings.debugForceLocked;
+  const slotsRemaining = Math.max(0, CHANNEL_LIMIT - channels.length);
   const syncStatus = isRequestingCode || isVerifyingCode
     ? "Syncing..."
     : syncEnabled
@@ -753,31 +760,62 @@ export default function Popup() {
   function renderRestoreForm() {
     if (!showRestoreForm) return null;
 
+    const inputClass = `h-8 w-full rounded-lg border px-2 text-[12px] outline-none ${
+      isDark
+        ? "border-[#2b2b2b] bg-[#151515] text-white"
+        : "border-[#ddd4c6] bg-white text-[#1c1914]"
+    }`;
+
+    if (!codeSent) {
+      return (
+        <div className="mt-3 grid gap-2">
+          <p className={`text-[11px] ${theme.tertiaryText}`}>
+            Enter the email you used to purchase and we'll send you a one-time code.
+          </p>
+          <input
+            value={restoreEmail}
+            onChange={(event) => {
+              const value = event.target.value;
+              setRestoreEmail(value);
+              void browser.storage.local.set({ [RESTORE_EMAIL_DRAFT_KEY]: value });
+            }}
+            placeholder="you@example.com"
+            type="email"
+            className={inputClass}
+          />
+          <button
+            onClick={() => void handleRequestRestoreCode()}
+            disabled={isRequestingCode}
+            className={`h-8 w-full rounded-lg bg-[#ff4e45] px-3 text-[11px] font-semibold text-white transition-colors duration-150 hover:bg-[#ff5f57] ${
+              isRequestingCode ? "opacity-60 cursor-not-allowed" : ""
+            }`}
+          >
+            {isRequestingCode ? "Sending..." : "Send code"}
+          </button>
+          {billingNotice && (
+            <div className={`text-[11px] ${theme.tertiaryText}`}>{billingNotice}</div>
+          )}
+        </div>
+      );
+    }
+
     return (
       <div className="mt-3 grid gap-2">
-        <input
-          value={restoreEmail}
-          onChange={(event) => {
-            const value = event.target.value;
-            setRestoreEmail(value);
-            void browser.storage.local.set({ [RESTORE_EMAIL_DRAFT_KEY]: value });
-          }}
-          placeholder="you@example.com"
-          className={`h-8 w-full rounded-lg border px-2 text-[12px] outline-none ${
-            isDark
-              ? "border-[#2b2b2b] bg-[#151515] text-white"
-              : "border-[#ddd4c6] bg-white text-[#1c1914]"
-          }`}
-        />
+        <p className={`text-[11px] ${theme.tertiaryText}`}>
+          Code sent to <span className="font-medium">{restoreEmail}</span>.{" "}
+          <button
+            onClick={() => { setCodeSent(false); setBillingNotice(null); }}
+            className="underline underline-offset-2 hover:opacity-70"
+          >
+            Change email
+          </button>
+        </p>
         <input
           value={restoreCode}
           onChange={(event) => setRestoreCode(event.target.value)}
-          placeholder="Enter code"
-          className={`h-8 w-full rounded-lg border px-2 text-[12px] outline-none ${
-            isDark
-              ? "border-[#2b2b2b] bg-[#151515] text-white"
-              : "border-[#ddd4c6] bg-white text-[#1c1914]"
-          }`}
+          placeholder="Paste code from email"
+          className={inputClass}
+          autoFocus
         />
         <div className="flex items-center gap-2">
           <button
@@ -786,7 +824,9 @@ export default function Popup() {
             className={`h-8 flex-1 rounded-lg bg-[#ff4e45] px-3 text-[11px] font-semibold text-white transition-colors duration-150 hover:bg-[#ff5f57] ${
               isVerifyingCode ? "opacity-60 cursor-not-allowed" : ""
             }`}
-          >{isVerifyingCode ? "Verifying..." : "Verify"}</button>
+          >
+            {isVerifyingCode ? "Verifying..." : "Verify code"}
+          </button>
           <button
             onClick={() => void handleRequestRestoreCode()}
             disabled={isRequestingCode}
@@ -796,7 +836,7 @@ export default function Popup() {
                 : "border-[#cfc6b8] text-[#5f584b] hover:bg-[#eee7da]"
             } ${isRequestingCode ? "opacity-60 cursor-not-allowed" : ""}`}
           >
-            Send code
+            {isRequestingCode ? "Sending..." : "Resend"}
           </button>
         </div>
         {billingNotice && (
@@ -814,7 +854,21 @@ export default function Popup() {
           HitTheBell
         </div>
         {isRefreshing && (
-          <div className={`text-[11px] ${theme.tertiaryText}`}>Refreshing...</div>
+          <div className={`flex items-center gap-1 text-[11px] ${theme.tertiaryText}`}>
+            <svg
+              className="animate-spin"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+            >
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+            Refreshing...
+          </div>
         )}
         {!isLocked && (
           <>
@@ -907,7 +961,7 @@ export default function Popup() {
                       onClick={() => toggleRestoreForm()}
                       className="rounded-full border border-white/20 px-2.5 py-1 text-[11px] font-semibold text-current transition-colors duration-150 hover:bg-white/10"
                     >
-                      Sync
+                      Already paid?
                     </button>
                   )}
                 </>
@@ -918,7 +972,7 @@ export default function Popup() {
         )}
 
         {!isLocked && (
-          <div className={`mx-4 mt-2 text-[11px] ${theme.secondaryText}`}>            Slots remaining: {slotsRemaining} / {channelLimit} · {syncStatus}
+          <div className={`mx-4 mt-2 text-[11px] ${theme.secondaryText}`}>            Slots remaining: {slotsRemaining} / {CHANNEL_LIMIT} · {syncStatus}
           </div>
         )}
 

@@ -57,7 +57,7 @@ export default defineConfig({
           "https://www.youtube.com/*",
           "https://www.googleapis.com/*",
         ],
-      } as any,
+      } as Record<string, unknown>,
     }),
   ],
   build: {
