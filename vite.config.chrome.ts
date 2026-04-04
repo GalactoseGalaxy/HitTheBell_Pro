@@ -9,14 +9,6 @@ export default defineConfig({
     tailwindcss(),
     webExtension({
       useDynamicUrlWebAccessibleResources: false,
-      additionalInputs: {
-        html: [
-          {
-            fileName: "src/checkout/index.html",
-            webAccessible: false,
-          },
-        ],
-      },
       manifest: {
         name: "HitTheBell Pro",
         description: "A browser extension built with React and TypeScript.",
@@ -51,6 +43,10 @@ export default defineConfig({
             matches: ["*://youtube.com/*", "*://*.youtube.com/*"],
           },
         ],
+        content_security_policy: {
+          extension_pages:
+            "script-src 'self' https://cdn.paddle.com https://sandbox-cdn.paddle.com; object-src 'self'",
+        },
         permissions: [
           "storage",
           "tabs",

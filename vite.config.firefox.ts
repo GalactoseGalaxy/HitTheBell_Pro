@@ -8,14 +8,6 @@ export default defineConfig({
     react(),
     tailwindcss(),
     webExtension({
-      additionalInputs: {
-        html: [
-          {
-            fileName: "src/checkout/index.html",
-            webAccessible: false,
-          },
-        ],
-      },
       manifest: {
         manifest_version: 2,
         name: "HitTheBell Pro",
@@ -49,6 +41,8 @@ export default defineConfig({
           "assets/*/*",
           "assets/*/*/*",
         ],
+        content_security_policy:
+          "script-src 'self' https://cdn.paddle.com https://sandbox-cdn.paddle.com; object-src 'self'",
         permissions: [
           "storage",
           "tabs",

@@ -13,8 +13,9 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export async function startCheckout(
   email?: string,
 ): Promise<BillingActionResult> {
-  const base = browser.runtime.getURL("src/checkout/index.html");
+  const base = browser.runtime.getURL("src/popup/index.html");
   const url = new URL(base);
+  url.searchParams.set("checkout", "1");
   if (email) {
     url.searchParams.set("email", email);
   }
