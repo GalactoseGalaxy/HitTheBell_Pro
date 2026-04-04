@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -r \"any\\\\|@ts-ignore\\\\|as any\" 'C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\.claude\\\\worktrees\\\\pensive-shannon/src' --include=*.ts --include=*.tsx)",
+      "Bash(cp \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\.claude\\\\worktrees\\\\pensive-shannon\\\\src\\\\lib\\\\youtube.ts\" \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\src\\\\lib\\\\youtube.ts\")",
+      "Bash(cp \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\.claude\\\\worktrees\\\\pensive-shannon\\\\src\\\\lib\\\\config.ts\" \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\src\\\\lib\\\\config.ts\")",
+      "Bash(cp \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\.claude\\\\worktrees\\\\pensive-shannon\\\\src\\\\lib\\\\backend.ts\" \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\src\\\\lib\\\\backend.ts\")",
+      "Bash(cp \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\.claude\\\\worktrees\\\\pensive-shannon\\\\src\\\\lib\\\\billing.ts\" \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\src\\\\lib\\\\billing.ts\")",
+      "Bash(cp \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\.claude\\\\worktrees\\\\pensive-shannon\\\\src\\\\lib\\\\channel-service.ts\" \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\src\\\\lib\\\\channel-service.ts\")"
+    ]
+  }
+}
