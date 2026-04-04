@@ -12,6 +12,7 @@ import {
 } from "./youtube";
 import type { Channel } from "../types";
 
+export const CHANNEL_LIMIT = 30;
 const POPUP_OPEN_REFRESH_WINDOW_MS = 10 * 60 * 1000;
 const METADATA_REFRESH_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const CHANNEL_REFRESH_WINDOW_MS = 10 * 60 * 1000;
@@ -147,8 +148,8 @@ export async function followChannelFromContext(input: {
   }
 
   const existingChannels = await getChannels();
-  if (existingChannels.length >= 30) {
-    throw new Error("Channel limit reached (30). Unfollow a channel to add more.");
+  if (existingChannels.length >= CHANNEL_LIMIT) {
+    throw new Error(`Channel limit reached (${CHANNEL_LIMIT}). Unfollow a channel to add more.`);
   }
 
   const urls = [input.linkUrl, input.srcUrl, input.pageUrl].filter(

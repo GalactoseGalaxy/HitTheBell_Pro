@@ -9,10 +9,6 @@ browser.runtime.onMessage.addListener((message: unknown) => {
 
 const FOLLOW_MENU_ITEM_ID = "hit-the-bell-follow-menu-item";
 const MENU_TEXT = "Hit the Bell";
-const ICON_URL = (typeof browser !== "undefined"
-  ? browser.runtime.getURL("icon.svg")
-  : (globalThis as { chrome?: { runtime: { getURL: (path: string) => string } } })
-      .chrome?.runtime.getURL("icon.svg") ?? "");
 
 
 function showToast(message: string, type: "success" | "error" | "info"): void {
@@ -431,8 +427,14 @@ function injectFollowMenuItem(): void {
   });
 }
 
+let observerDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
 const observer = new MutationObserver(() => {
-  injectFollowMenuItem();
+  if (observerDebounceTimer !== null) return;
+  observerDebounceTimer = setTimeout(() => {
+    observerDebounceTimer = null;
+    injectFollowMenuItem();
+  }, 100);
 });
 
 observer.observe(document.documentElement, {

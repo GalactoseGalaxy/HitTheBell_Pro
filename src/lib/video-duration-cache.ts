@@ -2,6 +2,7 @@ import browser from "webextension-polyfill";
 
 const CACHE_KEY = "videoDurationCache";
 const MAX_CACHE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 500;
 
 type CacheEntry = {
   duration: string;
@@ -48,5 +49,12 @@ export async function setCachedVideoDurations(
     cache[id] = { duration, updatedAt: now };
   }
 
-  await browser.storage.local.set({ [CACHE_KEY]: cache });
+  const entries = Object.entries(cache);
+  if (entries.length > MAX_CACHE_ENTRIES) {
+    entries.sort((a, b) => a[1].updatedAt.localeCompare(b[1].updatedAt));
+    const trimmed = Object.fromEntries(entries.slice(entries.length - MAX_CACHE_ENTRIES));
+    await browser.storage.local.set({ [CACHE_KEY]: trimmed });
+  } else {
+    await browser.storage.local.set({ [CACHE_KEY]: cache });
+  }
 }

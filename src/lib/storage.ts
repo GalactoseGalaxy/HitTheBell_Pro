@@ -222,7 +222,14 @@ export async function getChannels(): Promise<Channel[]> {
 export async function setChannels(channels: Channel[]): Promise<Channel[]> {
   const now = new Date().toISOString();
   const normalized = normalizeChannels(channels, now);
-  await browser.storage.sync.set({ [CHANNELS_KEY]: normalized });
+  try {
+    await browser.storage.sync.set({ [CHANNELS_KEY]: normalized });
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("QUOTA_BYTES")) {
+      throw new Error("Storage quota exceeded. Try removing some channels.");
+    }
+    throw err;
+  }
 
   const paddleCustomerId = await getPaddleCustomerId();
   const syncEnabled = await getSyncEnabled();

@@ -1,12 +1,12 @@
-const BACKEND_URL =
-  (import.meta as { env?: Record<string, string> }).env?.VITE_BACKEND_URL ||
-  "http://localhost:8787";
+import { BACKEND_URL } from "./config";
 
 export interface BillingActionResult {
   message: string;
   paddleCustomerId?: string;
   ok?: boolean;
 }
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export async function startCheckout(): Promise<BillingActionResult> {
   return {
@@ -20,6 +20,9 @@ export async function requestRestoreCode(
   const trimmed = email.trim().toLowerCase();
   if (!trimmed) {
     return { message: "Please enter the email used for purchase." };
+  }
+  if (!EMAIL_REGEX.test(trimmed)) {
+    return { message: "Please enter a valid email address." };
   }
 
   const response = await fetch(`${BACKEND_URL}/restore/request`, {
