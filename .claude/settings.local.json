@@ -6,7 +6,16 @@
       "Bash(cp \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\.claude\\\\worktrees\\\\pensive-shannon\\\\src\\\\lib\\\\config.ts\" \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\src\\\\lib\\\\config.ts\")",
       "Bash(cp \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\.claude\\\\worktrees\\\\pensive-shannon\\\\src\\\\lib\\\\backend.ts\" \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\src\\\\lib\\\\backend.ts\")",
       "Bash(cp \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\.claude\\\\worktrees\\\\pensive-shannon\\\\src\\\\lib\\\\billing.ts\" \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\src\\\\lib\\\\billing.ts\")",
-      "Bash(cp \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\.claude\\\\worktrees\\\\pensive-shannon\\\\src\\\\lib\\\\channel-service.ts\" \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\src\\\\lib\\\\channel-service.ts\")"
+      "Bash(cp \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\.claude\\\\worktrees\\\\pensive-shannon\\\\src\\\\lib\\\\channel-service.ts\" \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\src\\\\lib\\\\channel-service.ts\")",
+      "Bash(git -C \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\" diff --stat)",
+      "Bash(git -C \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\" status --short)",
+      "Bash(git -C \"C:\\\\Web Dev Projects\\\\HitTheBell_Pro\" add .env.example server/db.js server/index.js server/.env.example src/lib/billing.ts src/lib/config.ts src/popup/Popup.tsx)",
+      "Bash(git -C:*)",
+      "Bash(npm install:*)",
+      "Bash(python -c \":*)",
+      "Bash(npm uninstall:*)",
+      "Bash(npm run:*)",
+      "Bash(python -c \"import json; m=json.load\\(open\\(r''C:\\\\Web Dev Projects\\\\HitTheBell_Pro\\\\dist\\\\chrome\\\\manifest.json''\\)\\); print\\(json.dumps\\(m.get\\(''content_security_policy''\\), indent=2\\)\\)\")"
     ]
   }
 }
