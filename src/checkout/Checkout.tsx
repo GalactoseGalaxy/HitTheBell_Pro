@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { initializePaddle, type Paddle } from "@paddle/paddle-js";
 import browser from "webextension-polyfill";
 import {
   setHasPaidAccess,
@@ -9,11 +8,11 @@ import {
 } from "../lib/storage";
 import { BACKEND_URL } from "../lib/config";
 
-const PADDLE_CLIENT_TOKEN = import.meta.env.VITE_PADDLE_CLIENT_TOKEN || "";
 const PADDLE_PRICE_ID_MONTHLY = import.meta.env.VITE_PADDLE_PRICE_ID_MONTHLY || "";
 const PADDLE_PRICE_ID_YEARLY = import.meta.env.VITE_PADDLE_PRICE_ID_YEARLY || "";
-const PADDLE_ENV =
-  (import.meta.env.VITE_PADDLE_ENV as "production" | "sandbox") || "production";
+
+const POLL_INTERVAL_MS = 3000;
+const POLL_TIMEOUT_MS = 15 * 60 * 1000; // stop polling after 15 minutes
 
 function getEmailParam(): string {
   try {
@@ -24,10 +23,9 @@ function getEmailParam(): string {
 }
 
 type Plan = "monthly" | "yearly";
-type CheckoutStatus = "pick" | "loading" | "open" | "success" | "error";
+type CheckoutStatus = "pick" | "loading" | "awaiting" | "success" | "error";
 
 export default function Checkout() {
-  const paddleRef = useRef<Paddle | null>(null);
   const [status, setStatus] = useState<CheckoutStatus>("pick");
   const [selectedPlan, setSelectedPlan] = useState<Plan>("yearly");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -35,11 +33,21 @@ export default function Checkout() {
     window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
 
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollStartRef = useRef<number>(0);
+
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const handler = (e: MediaQueryListEvent) => setSystemPrefersDark(e.matches);
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  // Clean up polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
   }, []);
 
   const isDark = systemPrefersDark;
@@ -54,17 +62,82 @@ export default function Checkout() {
     : "border-[#ff4e45] bg-[#fff5f4]";
   const iconUrl = browser.runtime.getURL("icon.png");
 
+  function stopPolling() {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  }
+
   function handleClose() {
+    stopPolling();
     window.close();
   }
 
-  async function handleSubscribe() {
-    if (!PADDLE_CLIENT_TOKEN) {
-      setStatus("error");
-      setErrorMessage("Checkout is not configured yet. Missing VITE_PADDLE_CLIENT_TOKEN.");
-      return;
-    }
+  async function checkTransactionStatus(
+    transactionId: string,
+    email: string,
+  ): Promise<void> {
+    try {
+      const res = await fetch(`${BACKEND_URL}/checkout/status/${transactionId}`);
+      if (!res.ok) return; // transient error — keep polling
 
+      const data = (await res.json()) as {
+        status?: string;
+        customerId?: string | null;
+      };
+
+      // Paddle statuses that mean "payment done"
+      if (data.status === "completed" || data.status === "paid") {
+        stopPolling();
+
+        const customerId = data.customerId ?? null;
+        if (customerId) {
+          await setPaddleCustomerId(customerId);
+          await setSyncEnabled(true);
+          if (email) await setLastSyncEmail(email);
+        }
+        await setHasPaidAccess(true);
+
+        // Re-confirm with the backend customer record in case webhook already fired
+        if (customerId) {
+          try {
+            const confirmRes = await fetch(`${BACKEND_URL}/customers/${customerId}`);
+            if (confirmRes.ok) {
+              const payload = (await confirmRes.json()) as {
+                status?: string;
+                paidThrough?: string;
+              } | null;
+              const isPaid =
+                payload?.status === "active" ||
+                payload?.status === "paid" ||
+                (payload?.status === "canceled" &&
+                  !!payload.paidThrough &&
+                  new Date(payload.paidThrough).getTime() > Date.now());
+              await setHasPaidAccess(isPaid);
+            }
+          } catch {
+            // Backend refresh failed — optimistic value stands
+          }
+        }
+
+        setStatus("success");
+      } else if (data.status === "canceled") {
+        stopPolling();
+        setStatus("pick"); // Let them try again
+      } else if (Date.now() - pollStartRef.current > POLL_TIMEOUT_MS) {
+        stopPolling();
+        setErrorMessage(
+          "We couldn't confirm your payment automatically. If you completed checkout, use Restore Purchase in the extension popup.",
+        );
+        setStatus("error");
+      }
+    } catch {
+      // Network error — keep polling
+    }
+  }
+
+  async function handleSubscribe() {
     const priceId =
       selectedPlan === "yearly" ? PADDLE_PRICE_ID_YEARLY : PADDLE_PRICE_ID_MONTHLY;
 
@@ -79,85 +152,38 @@ export default function Checkout() {
     setStatus("loading");
 
     try {
-      const paddle = await initializePaddle({
-        token: PADDLE_CLIENT_TOKEN,
-        environment: PADDLE_ENV,
-        checkout: {
-          settings: {
-            displayMode: "overlay",
-            theme: isDark ? "dark" : "light",
-            locale: "en",
-          },
-        },
-        eventCallback(event) {
-          if (event.name === "checkout.completed") {
-            const customerId =
-              event.data?.customer?.id ??
-              event.data?.transaction?.customer_id ??
-              null;
-            const email =
-              event.data?.customer?.email ?? getEmailParam() ?? null;
+      const email = getEmailParam();
 
-            void (async () => {
-              try {
-                if (customerId) {
-                  await setPaddleCustomerId(customerId);
-                  await setSyncEnabled(true);
-                  if (email) await setLastSyncEmail(email);
-
-                  // Optimistically mark paid — webhook will confirm shortly
-                  await setHasPaidAccess(true);
-
-                  // Refresh from backend in case webhook already fired
-                  try {
-                    const res = await fetch(`${BACKEND_URL}/customers/${customerId}`);
-                    if (res.ok) {
-                      const payload = (await res.json()) as {
-                        status?: string;
-                        paidThrough?: string;
-                      } | null;
-                      const isPaid =
-                        payload?.status === "active" ||
-                        payload?.status === "paid" ||
-                        (payload?.status === "canceled" &&
-                          !!payload.paidThrough &&
-                          new Date(payload.paidThrough).getTime() > Date.now());
-                      await setHasPaidAccess(isPaid);
-                    }
-                  } catch {
-                    // Backend refresh failed — optimistic value stands
-                  }
-                }
-              } finally {
-                setStatus("success");
-              }
-            })();
-          }
-
-          if (event.name === "checkout.closed") {
-            setStatus((current) => (current === "success" ? "success" : "pick"));
-          }
-
-          if (event.name === "checkout.error") {
-            setStatus("error");
-            setErrorMessage("Something went wrong with checkout. Please try again.");
-          }
-        },
+      const res = await fetch(`${BACKEND_URL}/checkout/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ priceId, email: email || undefined }),
       });
 
-      paddleRef.current = paddle ?? null;
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(payload.error ?? `Server error (${res.status})`);
+      }
 
-      const prefillEmail = getEmailParam();
-      paddle?.Checkout.open({
-        items: [{ priceId, quantity: 1 }],
-        customer: prefillEmail ? { email: prefillEmail } : undefined,
-      });
+      const { checkoutUrl, transactionId } = (await res.json()) as {
+        checkoutUrl: string;
+        transactionId: string;
+      };
 
-      setStatus("open");
+      // Open Paddle's hosted checkout page in a new tab — no Paddle.js needed
+      await browser.tabs.create({ url: checkoutUrl });
+
+      setStatus("awaiting");
+
+      // Poll until payment is confirmed or times out
+      pollStartRef.current = Date.now();
+      pollIntervalRef.current = setInterval(() => {
+        void checkTransactionStatus(transactionId, email);
+      }, POLL_INTERVAL_MS);
     } catch (err) {
       setStatus("error");
       setErrorMessage(
-        err instanceof Error ? err.message : "Failed to initialize checkout.",
+        err instanceof Error ? err.message : "Failed to start checkout.",
       );
     }
   }
@@ -292,15 +318,40 @@ export default function Checkout() {
           >
             <path d="M21 12a9 9 0 1 1-6.219-8.56" />
           </svg>
-          <p className={`text-[13px] ${textSecondary}`}>Opening checkout…</p>
+          <p className={`text-[13px] ${textSecondary}`}>Preparing checkout…</p>
         </div>
       )}
 
-      {/* Overlay is open — background hint */}
-      {status === "open" && (
-        <p className={`text-[13px] ${textSecondary}`}>
-          Complete your purchase in the overlay above.
-        </p>
+      {/* Awaiting payment in new tab */}
+      {status === "awaiting" && (
+        <div className="w-full max-w-sm flex flex-col items-center gap-4 text-center">
+          <svg
+            className="animate-spin"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+          >
+            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+          </svg>
+          <div>
+            <p className={`text-[14px] font-semibold ${textPrimary}`}>
+              Complete your purchase
+            </p>
+            <p className={`mt-1 text-[12px] ${textSecondary}`}>
+              A checkout tab has opened. Finish payment there — this window will update automatically.
+            </p>
+          </div>
+          <button
+            onClick={handleClose}
+            className={`text-[12px] transition-colors ${textSecondary} hover:opacity-70`}
+          >
+            Cancel
+          </button>
+        </div>
       )}
 
       {/* Success */}

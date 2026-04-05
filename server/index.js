@@ -403,6 +403,90 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
 
+// Create a Paddle hosted-checkout transaction and return the URL.
+// The extension opens this URL in a new browser tab — no Paddle.js needed.
+app.post("/checkout/create", async (req, res) => {
+  try {
+    const { priceId, email } = req.body ?? {};
+    if (!priceId) {
+      return res.status(400).json({ error: "priceId is required." });
+    }
+    if (!PADDLE_API_KEY) {
+      return res.status(500).json({ error: "Paddle is not configured on the server." });
+    }
+
+    const body = {
+      items: [{ price_id: priceId, quantity: 1 }],
+    };
+
+    if (email) {
+      body.customer = { email };
+    }
+
+    const response = await fetch(`${PADDLE_API_BASE}/transactions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${PADDLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      return res.status(502).json({ error: `Paddle error (${response.status}): ${text}` });
+    }
+
+    const payload = await response.json();
+    const transaction = payload?.data;
+    const checkoutUrl = transaction?.checkout?.url;
+    const transactionId = transaction?.id;
+
+    if (!checkoutUrl) {
+      return res.status(502).json({ error: "Paddle did not return a checkout URL." });
+    }
+
+    return res.json({ checkoutUrl, transactionId });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Checkout creation failed.";
+    return res.status(500).json({ error: message });
+  }
+});
+
+// Poll a Paddle transaction to see if payment has completed.
+// Returns { status, customerId } — status mirrors Paddle's transaction status.
+app.get("/checkout/status/:transactionId", async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+    if (!PADDLE_API_KEY) {
+      return res.status(500).json({ error: "Paddle is not configured on the server." });
+    }
+
+    const response = await fetch(`${PADDLE_API_BASE}/transactions/${transactionId}`, {
+      headers: {
+        Authorization: `Bearer ${PADDLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      return res.status(502).json({ error: `Paddle error (${response.status}): ${text}` });
+    }
+
+    const payload = await response.json();
+    const transaction = payload?.data;
+    // Paddle statuses: draft | ready | billed | paid | completed | canceled | past_due
+    const status = transaction?.status ?? "unknown";
+    const customerId = transaction?.customer_id ?? null;
+
+    return res.json({ status, customerId, transactionId });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Status check failed.";
+    return res.status(500).json({ error: message });
+  }
+});
+
 if (DEBUG_MODE) {
   app.post("/debug/simulate-webhook", async (req, res) => {
     try {

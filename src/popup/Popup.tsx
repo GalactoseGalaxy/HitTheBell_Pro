@@ -20,12 +20,15 @@ import { CHANNEL_LIMIT, shouldRefreshOnPopupOpen } from "../lib/channel-service"
 import { fetchVideoDurations } from "../lib/youtube";
 import {
   requestRestoreCode,
-  startCheckout,
   verifyRestoreCode,
 } from "../lib/billing";
 import { BACKEND_URL, MANAGE_SUBSCRIPTION_URL } from "../lib/config";
 import type { ExtensionMessage } from "../types";
 import type { Channel, PopupSettings, TrialAccessState } from "../types/storage";
+
+const PADDLE_PRICE_ID_MONTHLY = import.meta.env.VITE_PADDLE_PRICE_ID_MONTHLY || "";
+const PADDLE_PRICE_ID_YEARLY = import.meta.env.VITE_PADDLE_PRICE_ID_YEARLY || "";
+const CHECKOUT_POLL_INTERVAL_MS = 3000;
 
 const RESTORE_EMAIL_DRAFT_KEY = "restoreEmailDraft";
 const TRIAL_START_DATE_KEY = "trialStartDate";
@@ -57,6 +60,9 @@ export default function Popup() {
   const [isVerifyingCode, setIsVerifyingCode] = useState(false);
   const [showRestoreForm, setShowRestoreForm] = useState(false);
   const [codeSent, setCodeSent] = useState(false);
+  const [subscribeView, setSubscribeView] = useState<"plan-pick" | "loading" | "awaiting" | null>(null);
+  const [selectedPlan, setSelectedPlan] = useState<"monthly" | "yearly">("yearly");
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hydrateState = useRef({ running: false, hydratedIds: new Set<string>() });
   const storageDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const iconUrl = browser.runtime.getURL("icon.png");
@@ -204,6 +210,17 @@ export default function Popup() {
 
     return () => window.clearInterval(interval);
   }, [excludeShortsCooldownUntil]);
+
+  function stopPolling(): void {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  }
+
+  useEffect(() => {
+    return () => { stopPolling(); };
+  }, []);
 
   async function hydrateMissingDurations(
     nextChannels: Channel[],
@@ -371,19 +388,84 @@ export default function Popup() {
     setPaddleCustomerIdState(trimmed);
   }
 
-  async function handleSubscribe(): Promise<void> {
-    const email = restoreEmail || lastSyncEmail || undefined;
-    const result = await startCheckout(email);
-    if (result.checkoutUrl) {
-      void browser.windows.create({
-        url: result.checkoutUrl,
-        type: "popup",
-        width: 540,
-        height: 720,
-        focused: true,
+  function handleSubscribe(): void {
+    setSubscribeView("plan-pick");
+    setBillingNotice(null);
+  }
+
+  async function handleConfirmPlan(): Promise<void> {
+    const priceId =
+      selectedPlan === "yearly" ? PADDLE_PRICE_ID_YEARLY : PADDLE_PRICE_ID_MONTHLY;
+
+    if (!priceId) {
+      setBillingNotice(`Missing price ID for the ${selectedPlan} plan. Check your .env file.`);
+      return;
+    }
+
+    setSubscribeView("loading");
+    setBillingNotice(null);
+
+    try {
+      const email = restoreEmail || lastSyncEmail || undefined;
+      const res = await fetch(`${BACKEND_URL}/checkout/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ priceId, email: email || undefined }),
       });
-    } else {
-      setBillingNotice(result.message);
+
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error ?? `Server error (${res.status})`);
+      }
+
+      const { checkoutUrl, transactionId } = (await res.json()) as {
+        checkoutUrl: string;
+        transactionId: string;
+      };
+
+      await browser.tabs.create({ url: checkoutUrl });
+      setSubscribeView("awaiting");
+
+      pollIntervalRef.current = setInterval(() => {
+        void pollTransaction(transactionId, email ?? "");
+      }, CHECKOUT_POLL_INTERVAL_MS);
+    } catch (err) {
+      setSubscribeView("plan-pick");
+      setBillingNotice(
+        err instanceof Error ? err.message : "Could not start checkout.",
+      );
+    }
+  }
+
+  async function pollTransaction(transactionId: string, email: string): Promise<void> {
+    try {
+      const res = await fetch(`${BACKEND_URL}/checkout/status/${transactionId}`);
+      if (!res.ok) return;
+
+      const data = (await res.json()) as { status?: string; customerId?: string | null };
+
+      if (data.status === "completed" || data.status === "paid") {
+        stopPolling();
+        const customerId = data.customerId ?? null;
+        if (customerId) {
+          await setPaddleCustomerId(customerId);
+          await setSyncEnabled(true);
+          if (email) await setLastSyncEmail(email);
+          setPaddleCustomerIdState(customerId);
+          setLastSyncEmailState(email || null);
+          setSyncEnabledState(true);
+        }
+        await setHasPaidAccess(true);
+        setTrialAccess(await getTrialAccessState());
+        setSubscribeView(null);
+        setBillingNotice("You're subscribed! Welcome to HitTheBell Pro.");
+      } else if (data.status === "canceled") {
+        stopPolling();
+        setSubscribeView("plan-pick");
+        setBillingNotice("Checkout was canceled. Try again when you're ready.");
+      }
+    } catch {
+      // Network error — keep polling
     }
   }
 
@@ -852,6 +934,125 @@ export default function Popup() {
     );
   }
 
+  function renderSubscribeView() {
+    const cardBase = isDark
+      ? "border-[#2b2b2b] bg-[#141414]"
+      : "border-[#ddd4c6] bg-white";
+    const cardSelected = isDark
+      ? "border-[#ff4e45] bg-[#1a0f0e]"
+      : "border-[#ff4e45] bg-[#fff5f4]";
+
+    return (
+      <div className="flex-1 flex flex-col px-4 py-5 gap-4 overflow-y-auto">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { setSubscribeView(null); setBillingNotice(null); }}
+            className={`flex h-7 w-7 items-center justify-center rounded-full border-none bg-transparent transition-colors duration-150 ${theme.hoverBg} ${theme.headerButton}`}
+            title="Back"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </button>
+          <span className={`text-[14px] font-semibold ${theme.primaryText}`}>Choose a plan</span>
+        </div>
+
+        {subscribeView === "loading" && (
+          <div className="flex flex-col items-center justify-center flex-1 gap-3">
+            <svg className="animate-spin" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+            <p className={`text-[12px] ${theme.secondaryText}`}>Preparing checkout…</p>
+          </div>
+        )}
+
+        {subscribeView === "awaiting" && (
+          <div className="flex flex-col items-center justify-center flex-1 gap-3 text-center">
+            <svg className="animate-spin" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+            <div>
+              <p className={`text-[13px] font-semibold ${theme.primaryText}`}>Complete your purchase</p>
+              <p className={`mt-1 text-[12px] ${theme.secondaryText}`}>
+                A checkout tab has opened. Finish payment there — this window will update automatically.
+              </p>
+            </div>
+            <button
+              onClick={() => { stopPolling(); setSubscribeView("plan-pick"); setBillingNotice(null); }}
+              className={`text-[12px] ${theme.secondaryText} hover:opacity-70`}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {subscribeView === "plan-pick" && (
+          <>
+            <p className={`text-[12px] ${theme.secondaryText}`}>Cancel anytime from Paddle's customer portal.</p>
+
+            {/* Yearly card */}
+            <button
+              onClick={() => setSelectedPlan("yearly")}
+              className={`w-full rounded-2xl border-2 px-4 py-3.5 text-left transition-colors duration-150 ${selectedPlan === "yearly" ? cardSelected : cardBase}`}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[13px] font-semibold ${theme.primaryText}`}>Yearly</span>
+                    <span className="rounded-full bg-[#ff4e45] px-2 py-0.5 text-[10px] font-bold text-white">BEST VALUE</span>
+                  </div>
+                  <div className={`mt-0.5 text-[12px] ${theme.secondaryText}`}>Billed once a year · save 33%</div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="text-right">
+                    <div className={`text-[15px] font-bold ${theme.primaryText}`}>$23.99</div>
+                    <div className={`text-[11px] ${theme.secondaryText}`}>$2.00&thinsp;/&thinsp;mo</div>
+                  </div>
+                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${selectedPlan === "yearly" ? "border-[#ff4e45] bg-[#ff4e45]" : isDark ? "border-[#555]" : "border-[#ccc2b3]"}`}>
+                    {selectedPlan === "yearly" && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                  </div>
+                </div>
+              </div>
+            </button>
+
+            {/* Monthly card */}
+            <button
+              onClick={() => setSelectedPlan("monthly")}
+              className={`w-full rounded-2xl border-2 px-4 py-3.5 text-left transition-colors duration-150 ${selectedPlan === "monthly" ? cardSelected : cardBase}`}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className={`text-[13px] font-semibold ${theme.primaryText}`}>Monthly</div>
+                  <div className={`mt-0.5 text-[12px] ${theme.secondaryText}`}>Billed every month</div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="text-right">
+                    <div className={`text-[15px] font-bold ${theme.primaryText}`}>$2.99</div>
+                    <div className={`text-[11px] ${theme.secondaryText}`}>per month</div>
+                  </div>
+                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${selectedPlan === "monthly" ? "border-[#ff4e45] bg-[#ff4e45]" : isDark ? "border-[#555]" : "border-[#ccc2b3]"}`}>
+                    {selectedPlan === "monthly" && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                  </div>
+                </div>
+              </div>
+            </button>
+
+            <button
+              onClick={() => void handleConfirmPlan()}
+              className="w-full rounded-full bg-[#ff4e45] py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-[#ff5f57]"
+            >
+              Continue to checkout
+            </button>
+
+            {billingNotice && (
+              <p className={`text-[12px] text-center ${theme.secondaryText}`}>{billingNotice}</p>
+            )}
+          </>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className={`w-[400px] h-[520px] flex flex-col font-sans overflow-hidden ${theme.root}`}>
       <div className={`flex items-center gap-2 px-4 py-3 border-b ${theme.headerBorder}`}>
@@ -940,6 +1141,7 @@ export default function Popup() {
         )}
       </div>
 
+      {subscribeView !== null ? renderSubscribeView() : (
       <div className="flex-1 min-h-0 overflow-y-auto">
         {trialBanner && (
           <div className={`mx-4 mt-3 rounded-xl border px-3 py-2 text-[12px] font-medium ${trialBanner.tone}`}>
@@ -1048,6 +1250,7 @@ export default function Popup() {
           </div>
         )}
       </div>
+      )}
 
       <style>{`
         @keyframes slideIn {

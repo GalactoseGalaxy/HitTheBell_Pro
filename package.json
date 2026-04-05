@@ -26,7 +26,6 @@
     "vite": "^8.0.1"
   },
   "dependencies": {
-    "@paddle/paddle-js": "^1.6.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "webextension-polyfill": "^0.12.0"

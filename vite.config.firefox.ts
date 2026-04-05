@@ -41,8 +41,7 @@ export default defineConfig({
           "assets/*/*",
           "assets/*/*/*",
         ],
-        content_security_policy:
-          "script-src 'self' https://cdn.paddle.com https://sandbox-cdn.paddle.com; object-src 'self'",
+        content_security_policy: "script-src 'self'; object-src 'self'",
         permissions: [
           "storage",
           "tabs",
