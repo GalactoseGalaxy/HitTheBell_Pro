@@ -25,3 +25,7 @@ npm-debug.log*
 # Misc
 *.local
 Process.txt
+tmp_test.txt
+
+# Claude Code worktrees (internal tooling — never commit)
+.claude/worktrees/
