@@ -80,7 +80,10 @@ async function followCurrentChannel(): Promise<void> {
       }
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Follow failed.";
+    const raw = error instanceof Error ? error.message : "";
+    const message = raw.includes("Extension context invalidated")
+      ? "Please refresh the page and try again."
+      : raw || "Follow failed.";
     showToast(message, "error");
   }
 }
@@ -105,7 +108,10 @@ async function unfollowCurrentChannel(): Promise<void> {
       }
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unfollow failed.";
+    const raw = error instanceof Error ? error.message : "";
+    const message = raw.includes("Extension context invalidated")
+      ? "Please refresh the page and try again."
+      : raw || "Unfollow failed.";
     showToast(message, "error");
   }
 }
