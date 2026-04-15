@@ -1056,7 +1056,7 @@ export default function Popup() {
   return (
     <div className={`w-[400px] h-[520px] flex flex-col font-sans overflow-hidden ${theme.root}`}>
       <div className={`flex items-center gap-2 px-4 py-3 border-b ${theme.headerBorder}`}>
-        <img src={iconUrl} alt="HitTheBell" className="w-5 h-5" />
+        <img src={iconUrl} alt="HitTheBell" className="w-8 h-8" />
         <div className={`flex-1 min-w-0 font-semibold text-[15px] ${theme.primaryText}`}>
           HitTheBell
         </div>
