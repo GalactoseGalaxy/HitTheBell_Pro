@@ -20,6 +20,7 @@ const DEFAULT_POPUP_SETTINGS: PopupSettings = {
   excludeShorts: false,
   themePreference: "system",
   debugForceLocked: false,
+  notificationsEnabled: true,
 };
 
 let mutationQueue: Promise<unknown> = Promise.resolve();
@@ -135,6 +136,10 @@ function normalizePopupSettings(input: unknown): PopupSettings {
       typeof (input as { debugForceLocked?: unknown }).debugForceLocked === "boolean"
         ? Boolean((input as { debugForceLocked?: unknown }).debugForceLocked)
         : DEFAULT_POPUP_SETTINGS.debugForceLocked,
+    notificationsEnabled:
+      typeof (input as { notificationsEnabled?: unknown }).notificationsEnabled === "boolean"
+        ? Boolean((input as { notificationsEnabled?: unknown }).notificationsEnabled)
+        : DEFAULT_POPUP_SETTINGS.notificationsEnabled,
   };
 }
 

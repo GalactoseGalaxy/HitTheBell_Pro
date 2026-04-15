@@ -5,7 +5,7 @@ import {
   markChannelLatestUnseen,
   refreshAllChannels,
 } from "../lib/channel-service";
-import { fetchAndMergeRemoteChannels, getChannels, mutateChannels } from "../lib/storage";
+import { fetchAndMergeRemoteChannels, getChannels, getPopupSettings, mutateChannels } from "../lib/storage";
 import type {
   ExtensionMessage,
   RefreshAllChannelsMessage,
@@ -49,6 +49,12 @@ async function injectContentScripts(): Promise<void> {
 
 async function canShowNotifications(): Promise<boolean> {
   if (!browser.notifications?.create) return false;
+  try {
+    const settings = await getPopupSettings();
+    if (!settings.notificationsEnabled) return false;
+  } catch {
+    // If settings can't be read, default to showing notifications
+  }
   if (!browser.permissions?.contains) return true;
   try {
     return await browser.permissions.contains({ permissions: ["notifications"] });

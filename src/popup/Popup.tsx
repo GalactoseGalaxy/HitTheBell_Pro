@@ -48,7 +48,10 @@ export default function Popup() {
     excludeShorts: false,
     themePreference: "system",
     debugForceLocked: false,
+    notificationsEnabled: true,
   });
+  const [notificationToast, setNotificationToast] = useState<string | null>(null);
+  const notificationToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [trialAccess, setTrialAccess] = useState<TrialAccessState | null>(null);
   const [paddleCustomerId, setPaddleCustomerIdState] = useState("");
   const [billingNotice, setBillingNotice] = useState<string | null>(null);
@@ -342,11 +345,23 @@ export default function Popup() {
 
   async function toggleThemePreference(): Promise<void> {
     const nextSettings = await setPopupSettings({
-      excludeShorts: popupSettings.excludeShorts,
+      ...popupSettings,
       themePreference: isDark ? "light" : "dark",
-      debugForceLocked: popupSettings.debugForceLocked,
     });
     setPopupSettingsState(nextSettings);
+  }
+
+  async function toggleNotifications(): Promise<void> {
+    const next = !popupSettings.notificationsEnabled;
+    const nextSettings = await setPopupSettings({
+      ...popupSettings,
+      notificationsEnabled: next,
+    });
+    setPopupSettingsState(nextSettings);
+
+    if (notificationToastTimerRef.current) clearTimeout(notificationToastTimerRef.current);
+    setNotificationToast(next ? "Notifications on" : "Notifications off");
+    notificationToastTimerRef.current = setTimeout(() => setNotificationToast(null), 2500);
   }
 
   async function refreshPaidStatus(customerId: string): Promise<void> {
@@ -1054,7 +1069,7 @@ export default function Popup() {
   }
 
   return (
-    <div className={`w-[400px] h-[520px] flex flex-col font-sans overflow-hidden ${theme.root}`}>
+    <div className={`relative w-[400px] h-[520px] flex flex-col font-sans overflow-hidden ${theme.root}`}>
       <div className={`flex items-center gap-2 px-4 py-3 border-b ${theme.headerBorder}`}>
         <img src={iconUrl} alt="HitTheBell" className="w-8 h-8" />
         <div className={`flex-1 min-w-0 font-semibold text-[15px] ${theme.primaryText}`}>
@@ -1117,6 +1132,24 @@ export default function Popup() {
                   strokeLinejoin="round"
                 >
                   <path d="M12 3a6 6 0 1 0 9 9 9 9 0 1 1-9-9Z" />
+                </svg>
+              )}
+            </button>
+            <button
+              onClick={() => void toggleNotifications()}
+              title={popupSettings.notificationsEnabled ? "Turn off notifications" : "Turn on notifications"}
+              className={`flex h-7 w-7 items-center justify-center rounded-full border-none bg-transparent transition-colors duration-150 ${theme.hoverBg} ${popupSettings.notificationsEnabled ? theme.headerButton : theme.tertiaryText}`}
+            >
+              {popupSettings.notificationsEnabled ? (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+                  <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+                </svg>
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+                  <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+                  <line x1="2" y1="2" x2="22" y2="22" />
                 </svg>
               )}
             </button>
@@ -1250,6 +1283,12 @@ export default function Popup() {
           </div>
         )}
       </div>
+      )}
+
+      {notificationToast && (
+        <div className={`absolute bottom-4 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full text-[12px] font-medium shadow-md pointer-events-none ${isDark ? "bg-[#2a2a2a] text-white" : "bg-[#1c1914] text-white"}`}>
+          {notificationToast}
+        </div>
       )}
 
       <style>{`

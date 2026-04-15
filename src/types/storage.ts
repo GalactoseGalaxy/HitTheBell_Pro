@@ -49,4 +49,5 @@ export interface PopupSettings {
   excludeShorts: boolean;
   themePreference: "system" | "light" | "dark";
   debugForceLocked: boolean;
+  notificationsEnabled: boolean;
 }
