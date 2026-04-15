@@ -11,7 +11,7 @@ export default defineConfig({
       useDynamicUrlWebAccessibleResources: false,
       manifest: {
         name: "HitTheBell Pro",
-        description: "A browser extension built with React and TypeScript.",
+        description: "Track YouTube channels and get notified when they upload. Follow up to 30 channels, sync across devices, and filter out Shorts.",
         version: "1.0.0",
         manifest_version: 3,
         icons: {
@@ -49,7 +49,6 @@ export default defineConfig({
         permissions: [
           "storage",
           "tabs",
-          "windows",
           "scripting",
           "contextMenus",
           "alarms",
