@@ -14,16 +14,16 @@ export default defineConfig({
         version: "1.0.0",
         description: "A browser extension built with React and TypeScript.",
         icons: {
-          "16": "icon.png",
-          "48": "icon.png",
-          "128": "icon.png",
+          "16": "icon16.png",
+          "48": "icon48.png",
+          "128": "icon128.png",
         },
         browser_action: {
           default_popup: "src/popup/index.html",
           default_icon: {
-            "16": "icon.png",
-            "48": "icon.png",
-            "128": "icon.png",
+            "16": "icon16.png",
+            "48": "icon48.png",
+            "128": "icon128.png",
           },
         },
         background: {

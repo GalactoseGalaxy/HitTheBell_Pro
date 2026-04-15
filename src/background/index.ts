@@ -116,7 +116,7 @@ async function refreshAndMaybeNotify(
     try {
       await browser.notifications.create(notificationId, {
         type: "basic",
-        iconUrl: browser.runtime.getURL("icon.png"),
+        iconUrl: browser.runtime.getURL("icon128.png"),
         title: "New upload",
         message: `${channel.name}: ${channel.latestVideo.title}`,
       });

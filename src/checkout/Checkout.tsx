@@ -60,7 +60,7 @@ export default function Checkout() {
   const cardSelected = isDark
     ? "border-[#ff4e45] bg-[#1a0f0e]"
     : "border-[#ff4e45] bg-[#fff5f4]";
-  const iconUrl = browser.runtime.getURL("icon.png");
+  const iconUrl = browser.runtime.getURL("icon128.png");
 
   function stopPolling() {
     if (pollIntervalRef.current) {

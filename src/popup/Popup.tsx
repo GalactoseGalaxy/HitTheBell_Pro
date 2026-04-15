@@ -65,7 +65,7 @@ export default function Popup() {
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hydrateState = useRef({ running: false, hydratedIds: new Set<string>() });
   const storageDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const iconUrl = browser.runtime.getURL("icon.png");
+  const iconUrl = browser.runtime.getURL("icon128.png");
   const isDark =
     popupSettings.themePreference === "system"
       ? systemPrefersDark
