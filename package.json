@@ -8,6 +8,7 @@
     "dev:chrome": "vite build --watch --config vite.config.chrome.ts",
     "build:firefox": "vite build --config vite.config.firefox.ts",
     "build:chrome": "vite build --config vite.config.chrome.ts",
+    "build:chrome:dev": "vite build --config vite.config.chrome.ts --mode dev",
     "build": "npm run build:firefox && npm run build:chrome"
   },
   "keywords": [],

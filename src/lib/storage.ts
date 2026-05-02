@@ -334,6 +334,12 @@ export async function setPopupSettings(
 }
 
 export async function getTrialAccessState(): Promise<TrialAccessState> {
+  // Dev build bypass — never shown to real users
+  if (import.meta.env.VITE_DEV_BYPASS_TRIAL === "true") {
+    const now = new Date().toISOString();
+    return buildTrialAccessState(now, true);
+  }
+
   const now = new Date().toISOString();
   const syncData = await browser.storage.sync.get([
     TRIAL_START_DATE_KEY,

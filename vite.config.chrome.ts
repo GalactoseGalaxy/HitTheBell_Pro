@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import webExtension from "@samrum/vite-plugin-web-extension";
 import tailwindcss from "@tailwindcss/vite";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     tailwindcss(),
@@ -64,9 +64,9 @@ export default defineConfig({
     }),
   ],
   build: {
-    outDir: "dist/chrome",
+    outDir: mode === "dev" ? "dist/chrome-dev" : "dist/chrome",
     emptyOutDir: true,
   },
-});
+}));
 
 

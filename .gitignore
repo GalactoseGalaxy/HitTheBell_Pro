@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 dist/
+dist/chrome-dev/
 
 # Environment variables (NEVER commit these)
 .env
