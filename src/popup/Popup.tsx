@@ -1253,7 +1253,7 @@ export default function Popup() {
           </div>
         ) : channels.length === 0 ? (
           <div className={`p-5 text-[13px] text-center ${theme.secondaryText}`}>
-            Not following any channels yet.<br />To follow a channel, open one of its videos, then open the bell menu and choose "Hit the Bell" — or right-click the video and select "Follow Channel".
+            Not following any channels yet.<br />Use the bell icon on any YouTube video to follow that channel.
           </div>
         ) : (
           <div className="mt-3">
